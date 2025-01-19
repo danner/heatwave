@@ -28,10 +28,12 @@ def handle_midi_message(message, midi_out):
     # Check if the message is in the mapping
     if message.type == 'control_change':
         action = note_to_action.get(('control_change', message.control, message.value))
-    elif message.type == 'note_on' or message.type == 'note_off':
+    elif message.type == 'note_on':
         action = note_to_action.get(('note_on', message.note, message.velocity, message.channel))
     elif message.type == 'pitchwheel':
         action = note_to_action.get(('pitchwheel', message.channel))
+    elif message.type == 'note_off':
+        return
 
     if action:
         action_type, channel, action_name = action

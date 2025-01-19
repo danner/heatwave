@@ -1,11 +1,11 @@
 from mido import Message
 from pprint import pprint
 import json
+import copy
 
-
-# Initialize min and max volume variables
 min_volume = float('inf')
 max_volume = float('-inf')
+channel_log = []
 
 # State tracking for channels and global buttons
 channels = {
@@ -101,20 +101,39 @@ def handle_button(channel, note, button, midi_out):
 def handle_global_button(button_name, note, midi_out):
     print(f"Global button {button_name} pressed")
 
+    if button_name == 'play':
+        # display all frequencies on one line
+        print(f"Frequencies: {', '.join([str(channels[i]['frequency']) for i in range(8)])}")
+
     if button_name == 'pause':
         # Mute all channels
         for channel in channels:
             channels[channel]['mute'] = True
             mute_note = base_control_numbers['mute'] + channel
-            print(f"Channel {channel} muted")
+            midi_out.send(Message('note_on', note=mute_note, velocity=127))
+        print(f"Channels muted")
 
     if button_name == 'record':
         # Print the channels' state
         pprint(channels)
         
-        # Write the channels' state to a log file
-        with open('channels_state_log.json', 'w') as log_file:
-            json.dump(channels, log_file, indent=4)
+        # Append the current state to the channel_log
+        channel_log.append(copy.deepcopy(channels))
+        
+        # Write the channel_log to a log file as multiple lines of JSON
+        with open('channel_log.json', 'w') as log_file:
+            for entry in channel_log:
+                log_file.write(json.dumps({int(k): v for k, v in entry.items()}) + '\n')
+
+# Function to load the state log into an array
+def load_channel_log():
+    try:
+        with open('channel_log.json', 'r') as log_file:
+            state_log = [{int(k): v for k, v in json.loads(line).items()} for line in log_file]
+            return state_log
+    except FileNotFoundError:
+        print("Channel log file not found.")
+        return [channels]
 
 # Function to set all lights to the current state of the channels
 def set_lights_to_current_state(midi_out):
@@ -124,7 +143,7 @@ def set_lights_to_current_state(midi_out):
                 note = get_note_for_button(channel, button)
                 velocity = 127 if state else 0
                 midi_out.send(Message('note_on', note=note, velocity=velocity))
-                print(f"Channel {channel} button {button} {'ON' if state else 'OFF'}")
+                # print(f"Channel {channel} button {button} {'ON' if state else 'OFF'}")
 
 def get_note_for_button(channel, button):
     # Mapping of buttons to their corresponding MIDI notes

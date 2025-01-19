@@ -3,7 +3,7 @@ import time
 import pygame
 from midi import midi_in, midi_out, handle_midi_message
 from audio import update_volumes, update_pitches
-from state import channels
+from state import channels, set_lights_to_current_state
 
 # Function to update volumes and pitches based on channel states
 def audio_thread():
@@ -17,6 +17,9 @@ threading.Thread(target=audio_thread, daemon=True).start()
 # Main loop
 try:
     print("Running... Press Ctrl+C to stop.")
+
+    set_lights_to_current_state(midi_out)
+
     while True:
         # Read MIDI input
         for msg in midi_in.iter_pending():

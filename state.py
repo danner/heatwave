@@ -1,95 +1,95 @@
 from mido import Message
+from pprint import pprint
+import json
+
+
+# Initialize min and max volume variables
+min_volume = float('inf')
+max_volume = float('-inf')
 
 # State tracking for channels and global buttons
 channels = {
-    0: {'frequency': 440, 'volume': 1.0, 'mute': False, 's': False, 'r': False, 'box': False},
-    1: {'frequency': 440, 'volume': 1.0, 'mute': True, 's': False, 'r': False, 'box': False},
-    2: {'frequency': 440, 'volume': 1.0, 'mute': True, 's': False, 'r': False, 'box': False},
-    3: {'frequency': 440, 'volume': 1.0, 'mute': True, 's': False, 'r': False, 'box': False},
-    4: {'frequency': 440, 'volume': 1.0, 'mute': True, 's': False, 'r': False, 'box': False},
-    5: {'frequency': 440, 'volume': 1.0, 'mute': True, 's': False, 'r': False, 'box': False},
-    6: {'frequency': 440, 'volume': 1.0, 'mute': True, 's': False, 'r': False, 'box': False},
-    7: {'frequency': 440, 'volume': 1.0, 'mute': True, 's': False, 'r': False, 'box': False},
-}
-global_buttons = {'button1': False, 'button2': False, 'button3': False}
-
-# Mapping of MIDI notes to actions
-note_to_action = {
-    # Channel 0
-    ('control_change', 16, 1): ('rotary', 0, 'frequency_up'),
-    ('control_change', 16, 65): ('rotary', 0, 'frequency_down'),
-    ('pitchwheel', 0): ('volume', 0, 'set_volume'),
-    ('note_on', 16, 127, 0): ('button', 0, 'mute'),
-    ('note_on', 8, 127, 0): ('button', 0, 's'),
-    ('note_on', 0, 127, 0): ('button', 0, 'r'),
-    ('note_on', 24, 127, 0): ('button', 0, 'box'),
-    # Channel 1
-    ('control_change', 17, 1): ('rotary', 1, 'frequency_up'),
-    ('control_change', 17, 65): ('rotary', 1, 'frequency_down'),
-    ('pitchwheel', 1): ('volume', 1, 'set_volume'),
-    ('note_on', 17, 127, 0): ('button', 1, 'mute'),
-    ('note_on', 9, 127, 0): ('button', 1, 's'),
-    ('note_on', 1, 127, 0): ('button', 1, 'r'),
-    ('note_on', 25, 127, 0): ('button', 1, 'box'),
-    # Channel 2
-    ('control_change', 18, 1): ('rotary', 2, 'frequency_up'),
-    ('control_change', 18, 65): ('rotary', 2, 'frequency_down'),
-    ('pitchwheel', 2): ('volume', 2, 'set_volume'),
-    ('note_on', 18, 127, 0): ('button', 2, 'mute'),
-    ('note_on', 10, 127, 0): ('button', 2, 's'),
-    ('note_on', 2, 127, 0): ('button', 2, 'r'),
-    ('note_on', 26, 127, 0): ('button', 2, 'box'),
-    # Channel 3
-    ('control_change', 19, 1): ('rotary', 3, 'frequency_up'),
-    ('control_change', 19, 65): ('rotary', 3, 'frequency_down'),
-    ('pitchwheel', 3): ('volume', 3, 'set_volume'),
-    ('note_on', 19, 127, 0): ('button', 3, 'mute'),
-    ('note_on', 11, 127, 0): ('button', 3, 's'),
-    ('note_on', 3, 127, 0): ('button', 3, 'r'),
-    ('note_on', 27, 127, 0): ('button', 3, 'box'),
-    # Channel 4
-    ('control_change', 20, 1): ('rotary', 4, 'frequency_up'),
-    ('control_change', 20, 65): ('rotary', 4, 'frequency_down'),
-    ('pitchwheel', 4): ('volume', 4, 'set_volume'),
-    ('note_on', 20, 127, 0): ('button', 4, 'mute'),
-    ('note_on', 12, 127, 0): ('button', 4, 's'),
-    ('note_on', 4, 127, 0): ('button', 4, 'r'),
-    ('note_on', 28, 127, 0): ('button', 4, 'box'),
-    # Channel 5
-    ('control_change', 21, 1): ('rotary', 5, 'frequency_up'),
-    ('control_change', 21, 65): ('rotary', 5, 'frequency_down'),
-    ('pitchwheel', 5): ('volume', 5, 'set_volume'),
-    ('note_on', 21, 127, 0): ('button', 5, 'mute'),
-    ('note_on', 13, 127, 0): ('button', 5, 's'),
-    ('note_on', 5, 127, 0): ('button', 5, 'r'),
-    ('note_on', 29, 127, 0): ('button', 5, 'box'),
-    # Channel 6
-    ('control_change', 22, 1): ('rotary', 6, 'frequency_up'),
-    ('control_change', 22, 65): ('rotary', 6, 'frequency_down'),
-    ('pitchwheel', 6): ('volume', 6, 'set_volume'),
-    ('note_on', 22, 127, 0): ('button', 6, 'mute'),
-    ('note_on', 14, 127, 0): ('button', 6, 's'),
-    ('note_on', 6, 127, 0): ('button', 6, 'r'),
-    ('note_on', 30, 127, 0): ('button', 6, 'box'),
-    # Channel 7
-    ('control_change', 23, 1): ('rotary', 7, 'frequency_up'),
-    ('control_change', 23, 65): ('rotary', 7, 'frequency_down'),
-    ('pitchwheel', 7): ('volume', 7, 'set_volume'),
-    ('note_on', 23, 127, 0): ('button', 7, 'mute'),
-    ('note_on', 15, 127, 0): ('button', 7, 's'),
-    ('note_on', 7, 127, 0): ('button', 7, 'r'),
-    ('note_on', 31, 127, 0): ('button', 7, 'box'),
+    0: {'frequency': 110, 'volume': 1.0, 'mute': False, 'select': False, 'r': False, 'box': False},
+    1: {'frequency': 110, 'volume': 1.0, 'mute': True, 'select': False, 'r': False, 'box': False},
+    2: {'frequency': 110, 'volume': 1.0, 'mute': True, 'select': False, 'r': False, 'box': False},
+    3: {'frequency': 110, 'volume': 1.0, 'mute': True, 'select': False, 'r': False, 'box': False},
+    4: {'frequency': 110, 'volume': 1.0, 'mute': True, 'select': False, 'r': False, 'box': False},
+    5: {'frequency': 110, 'volume': 1.0, 'mute': True, 'select': False, 'r': False, 'box': False},
+    6: {'frequency': 110, 'volume': 1.0, 'mute': True, 'select': False, 'r': False, 'box': False},
+    7: {'frequency': 110, 'volume': 1.0, 'mute': True, 'select': False, 'r': False, 'box': False},
 }
 
-# Function to handle frequency adjustment
+# Base control numbers for each action
+base_control_numbers = {
+    'frequency_up': 1,
+    'frequency_down': 65,
+    'set_volume': 0,
+    'mute': 16,
+    'select': 8,
+    'r': 0,
+    'box': 24,
+}
+
+# Add global buttons
+global_button_notes = {
+    'play': 94,
+    'pause': 93,
+    'record': 95,
+    'rewind': 91,
+    'fast_forward': 92,
+    'back': 46,
+    'forward': 47,
+    'up': 96,
+    'down': 97,
+    'left': 98,
+    'right': 99,
+}
+
+# Function to build note_to_action dictionary
+def build_note_to_action():
+    note_to_action = {}
+    for channel in range(8):
+        note_to_action[('control_change', 16 + channel, base_control_numbers['frequency_up'])] = ('rotary', channel, 'frequency_up')
+        note_to_action[('control_change', 16 + channel, base_control_numbers['frequency_down'])] = ('rotary', channel, 'frequency_down')
+        note_to_action[('pitchwheel', channel)] = ('volume', channel, 'set_volume')
+        note_to_action[('note_on', base_control_numbers['mute'] + channel, 127, 0)] = ('button', channel, 'mute')
+        note_to_action[('note_on', base_control_numbers['select'] + channel, 127, 0)] = ('button', channel, 'select')
+        note_to_action[('note_on', base_control_numbers['r'] + channel, 127, 0)] = ('button', channel, 'r')
+        note_to_action[('note_on', base_control_numbers['box'] + channel, 127, 0)] = ('button', channel, 'box')
+
+
+    for button, note in global_button_notes.items():
+        note_to_action[('note_on', note, 127, 0)] = ('global_button', 0, button)
+
+    return note_to_action
+
+# Build the note_to_action dictionary
+note_to_action = build_note_to_action()
+# pprint(note_to_action)
+
+# Function to handle frequency adjustment 
 def adjust_frequency(channel, value):
-    channels[channel]['frequency'] += value
-    # print(f"Channel {channel} frequency set to {channels[channel]['frequency']} Hz")
+    adjustment = 0.1 if channels[channel]['select'] else 1.0
+    channels[channel]['frequency'] += value * adjustment
+
 
 # Function to handle volume adjustment
 def adjust_volume(channel, value):
-    channels[channel]['volume'] = (value + 8192) / 16384
-    print(f"Channel {channel} volume set to {channels[channel]['volume']}")
+    global min_volume, max_volume
+
+    # Update min and max volume values
+    if value < min_volume:
+        min_volume = value
+    if value > max_volume:
+        max_volume = value
+
+    # Calculate the volume ratio between 0.0 and 1.0
+    if max_volume != min_volume:
+        volume_ratio = (value - min_volume) / (max_volume - min_volume)
+    else:
+        volume_ratio = 0.0
+
+    channels[channel]['volume'] = volume_ratio
 
 # Function to handle button press
 def handle_button(channel, note, button, midi_out):
@@ -98,6 +98,42 @@ def handle_button(channel, note, button, midi_out):
     print(f"Channel {channel} button {button} {'ON' if channels[channel][button] else 'OFF'}")
 
 # Function to handle global button press
-def handle_global_button(button_name):
-    global_buttons[button_name] = not global_buttons[button_name]
-    print(f"Global button {button_name} {'ON' if global_buttons[button_name] else 'OFF'}")
+def handle_global_button(button_name, note, midi_out):
+    print(f"Global button {button_name} pressed")
+
+    if button_name == 'pause':
+        # Mute all channels
+        for channel in channels:
+            channels[channel]['mute'] = True
+            mute_note = base_control_numbers['mute'] + channel
+            print(f"Channel {channel} muted")
+
+    if button_name == 'record':
+        # Print the channels' state
+        pprint(channels)
+        
+        # Write the channels' state to a log file
+        with open('channels_state_log.json', 'w') as log_file:
+            json.dump(channels, log_file, indent=4)
+
+# Function to set all lights to the current state of the channels
+def set_lights_to_current_state(midi_out):
+    for channel, states in channels.items():
+        for button, state in states.items():
+            if button in ['mute', 'select', 'r', 'box']:
+                note = get_note_for_button(channel, button)
+                velocity = 127 if state else 0
+                midi_out.send(Message('note_on', note=note, velocity=velocity))
+                print(f"Channel {channel} button {button} {'ON' if state else 'OFF'}")
+
+def get_note_for_button(channel, button):
+    # Mapping of buttons to their corresponding MIDI notes
+    button_to_note = {
+        'mute': base_control_numbers['mute'] + channel,
+        'select': base_control_numbers['select'] + channel,
+        'r': base_control_numbers['r'] + channel,
+        'box': base_control_numbers['box'] + channel,
+    }
+    return button_to_note[button]
+
+

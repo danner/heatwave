@@ -1,6 +1,6 @@
 import mido
 from mido import MidiFile, Message, open_input, open_output
-from state import channels, global_buttons, note_to_action, adjust_frequency, adjust_volume, handle_button, handle_global_button
+from state import channels, note_to_action, adjust_frequency, adjust_volume, handle_button, handle_global_button
 
 # List all available MIDI ports
 print("Available MIDI ports:")
@@ -46,6 +46,6 @@ def handle_midi_message(message, midi_out):
         elif action_type == 'button':
             handle_button(channel, message.note, action_name, midi_out)
         elif action_type == 'global_button':
-            handle_global_button(action_name)
+            handle_global_button(action_name, message.note, midi_out)
     else:
         print(f"Unhandled MIDI message: {message}")

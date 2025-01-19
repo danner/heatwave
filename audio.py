@@ -22,8 +22,9 @@ def create_sound(freq, amplitude, rate):
     return sound
 
 # Initialize sounds for each channel
-sounds = [create_sound(440, AMPLITUDE, RATE) for _ in range(8)]
-frequencies = [440 for _ in range(8)]  # Track the current frequency of each channel
+sounds = [create_sound(110, AMPLITUDE, RATE) for _ in range(8)]
+frequencies = [110 for _ in range(8)]  # Track the current frequency of each channel
+volumes = [AMPLITUDE for _ in range(8)]  # Track the current volume of each channel
 
 # Function to play all sounds continuously
 def play_all_sounds():
@@ -34,18 +35,22 @@ def play_all_sounds():
 def update_volumes(channels):
     for i, channel in channels.items():
         volume = channel['volume'] if not channel['mute'] else 0
-        sounds[i].set_volume(volume)
+        if volume != volumes[i]:  # Only update if the volume has changed
+            print(f"Updating volume for channel {i} to {volume}")
+            volumes[i] = volume
+            sounds[i].set_volume(volume)
 
 # Function to update the pitch of each sound based on the frequency
 def update_pitches(channels):
     for i, channel in channels.items():
-        freq = channel['frequency']
+        freq = max(1, channel['frequency'])
         if freq != frequencies[i]:  # Only update if the frequency has changed
             print(f"Updating frequency for channel {i} to {freq}")
             frequencies[i] = freq
             wave = generate_sine_wave(freq, AMPLITUDE, RATE)
             sounds[i].stop()
             sounds[i] = pygame.sndarray.make_sound((wave * 32767).astype(np.int16))
+            sounds[i].set_volume(volumes[i])  # Respect the previously set volume
             sounds[i].play(-1)
 
 # Start playing all sounds

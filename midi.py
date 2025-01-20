@@ -1,6 +1,7 @@
 import mido
 from mido import MidiFile, Message, open_input, open_output
-from state import channels, note_to_action, adjust_frequency, adjust_volume, handle_button, handle_global_button
+from state import channels
+from midi_actions import note_to_action, adjust_frequency, adjust_volume, handle_button, handle_global_button
 
 # List all available MIDI ports
 print("Available MIDI ports:")

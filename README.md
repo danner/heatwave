@@ -1,6 +1,5 @@
 # HeatWave
-
-![HeatWave](https://photos.google.com/share/AF1QipOjlG7Df1C3UwzVKxTk-E8AxmEnFokogi974B3HLjz7vndMcoaFNuCBXFWQw1-kwA/photo/AF1QipOhs-NnPxJ5ZOJaZC4t3lzcTxaYLWo9Uloz7lJw?key=Rm0wRlRUN1YwUU1lYjRtNXRkeUE0UzlmSHUtMUx3)
+![HeatWave](https://github.com/user-attachments/assets/cc2b636b-b5e5-4601-9374-6c418216f138)
 
 ## Description
 HeatWave is a MIDI controller application that allows you to generate and control 8 audio frequencies and volumes using MIDI messages. You can record settings and then travel through past saved settings via the channel log.

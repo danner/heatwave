@@ -4,7 +4,7 @@ import pygame
 from midi import midi_in, midi_out, handle_midi_message
 from audio import update_volumes, update_pitches
 from state import channels, set_lights_to_current_state, channel_log, load_channel_log, set_current_log_index
-from web_server import start_web_server, broadcast_channel_update
+from web_server import start_web_server
 
 # Function to update volumes and pitches based on channel states
 def audio_thread():
@@ -39,8 +39,6 @@ try:
         for msg in midi_in.iter_pending():
             # print(f"MIDI Input: {msg}")
             handle_midi_message(msg, midi_out)
-            # Broadcast channel updates to web clients
-            broadcast_channel_update(0)  # For now, just update channel 0
 
 except KeyboardInterrupt:
     print("Stopping...")

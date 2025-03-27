@@ -40,10 +40,38 @@
             flex: 1 0 45%;
             min-width: 300px;
         }
+        .global-controls {
+            background-color: #e63946;
+            color: white;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+            display: flex;
+            gap: 10px;
+        }
+        .global-button {
+            background-color: white;
+            color: #e63946;
+            border: none;
+            border-radius: 4px;
+            padding: 8px 16px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        .global-button:hover {
+            background-color: #f8f9fa;
+        }
     </style>
 </head>
 <body>
     <h1>HeatWave Control</h1>
+    
+    <div class="global-controls">
+        <button id="play-button" class="global-button">Play</button>
+        <button id="pause-button" class="global-button">Pause (Mute All)</button>
+        <button id="record-button" class="global-button">Record State</button>
+    </div>
     
     <div class="channels-container" id="channels-container">
         <!-- Channels will be generated here -->
@@ -126,6 +154,19 @@
             });
         }
         
+        // Setup global button listeners
+        document.getElementById('play-button').addEventListener('click', () => {
+            socket.emit('global_button', { button_name: 'play' });
+        });
+        
+        document.getElementById('pause-button').addEventListener('click', () => {
+            socket.emit('global_button', { button_name: 'pause' });
+        });
+        
+        document.getElementById('record-button').addEventListener('click', () => {
+            socket.emit('global_button', { button_name: 'record' });
+        });
+        
         // Connect to WebSocket server
         socket.on('connect', () => {
             console.log('Connected to server');
@@ -151,6 +192,12 @@
             if (data.mute !== undefined) {
                 controls.muteCheckbox.checked = data.mute;
             }
+        });
+        
+        // Handle global updates (e.g., after using pause to mute all)
+        socket.on('update_all_channels', () => {
+            // Request fresh state for all channels
+            socket.emit('request_all_channels');
         });
         
         // Initialize UI

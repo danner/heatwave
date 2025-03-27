@@ -1,32 +1,102 @@
 import mido
+import threading
+import time
 from mido import MidiFile, Message, open_input, open_output
 from state import channels
 from midi_actions import note_to_action, adjust_frequency, adjust_volume, handle_button, handle_global_button
 
-# List all available MIDI ports
-print("Available MIDI ports:")
-print(mido.get_input_names())
-print(mido.get_output_names())
+# Define a dummy MIDI input class
+class DummyMidiInput:
+    def __init__(self):
+        self.name = "Dummy MIDI Input"
+        self._closed = False
+    
+    def iter_pending(self):
+        return []  # No messages when in dummy mode
+    
+    def close(self):
+        self._closed = True
+        
+    @property
+    def closed(self):
+        return self._closed
 
-# Select the SMC-Mixer ports
-input_name = 'SMC-Mixer Bluetooth'  # Replace with the actual input port name
-output_name = 'SMC-Mixer Bluetooth'  # Replace with the actual output port name
+# Define a dummy MIDI output class
+class DummyMidiOutput:
+    def __init__(self):
+        self.name = "Dummy MIDI Output"
+        self._closed = False
+    
+    def send(self, message):
+        pass  # Just ignore messages in dummy mode
+    
+    def close(self):
+        self._closed = True
+        
+    @property
+    def closed(self):
+        return self._closed
 
-# Open input and output ports
-midi_in = open_input(input_name)
-midi_out = open_output(output_name)
+# Initialize with dummy MIDI devices
+midi_in = DummyMidiInput()
+midi_out = DummyMidiOutput()
+midi_connected = False
 
-print(f"Connected to MIDI input: {input_name}")
-print(f"Connected to MIDI output: {output_name}")
+# Target MIDI device names
+target_input_name = 'SMC-Mixer Bluetooth'
+target_output_name = 'SMC-Mixer Bluetooth'
+
+def connect_midi_devices():
+    """Try to connect to MIDI devices, return True if successful"""
+    global midi_in, midi_out, midi_connected
+    
+    # Safely close existing connections if they're not already closed
+    if hasattr(midi_in, 'close') and not getattr(midi_in, 'closed', True):
+        midi_in.close()
+    if hasattr(midi_out, 'close') and not getattr(midi_out, 'closed', True):
+        midi_out.close()
+    
+    try:
+        # Check if our target devices are available
+        input_names = mido.get_input_names()
+        output_names = mido.get_output_names()
+        
+        if target_input_name in input_names and target_output_name in output_names:
+            print(f"Found MIDI devices. Connecting to {target_input_name}...")
+            midi_in = open_input(target_input_name)
+            midi_out = open_output(target_output_name)
+            midi_connected = True
+            print(f"Connected to MIDI input: {midi_in.name}")
+            print(f"Connected to MIDI output: {midi_out.name}")
+            from state import set_lights_to_current_state
+            set_lights_to_current_state(midi_out)  # Update lights to current state
+            return True
+        else:
+            midi_in = DummyMidiInput()
+            midi_out = DummyMidiOutput()
+            midi_connected = False
+            # print("Target MIDI devices not found. Using dummy MIDI devices.")
+            return False
+    except Exception as e:
+        midi_in = DummyMidiInput()
+        midi_out = DummyMidiOutput()
+        midi_connected = False
+        print(f"Error connecting to MIDI devices: {e}")
+        return False
+
+# Function to periodically check for MIDI devices
+def midi_device_monitor():
+    while True:
+        if not midi_connected:
+            connect_midi_devices()
+        time.sleep(5)  # Check every 5 seconds
 
 def handle_midi_message(message, midi_out):
-    # print(f"Received MIDI message: {message}")
-    # if message.type == 'note_on' or message.type == 'note_off':
-    #     print(f"Note {message.note} {'on' if message.type == 'note_on' else 'off'} with velocity {message.velocity}")
-    # elif message.type == 'pitchwheel':
-    #     print(f"Pitchwheel change on channel {message.channel} with pitch {message.pitch}")
-
-    # Check if the message is in the mapping
+    # Skip processing if we're using dummy devices
+    if not midi_connected:
+        return
+        
+    # Process MIDI message as before
     if message.type == 'control_change':
         action = note_to_action.get(('control_change', message.control, message.value))
     elif message.type == 'note_on':
@@ -38,7 +108,6 @@ def handle_midi_message(message, midi_out):
 
     if action:
         action_type, channel, action_name = action
-        # print(f"Action: {action_type}, Channel: {channel}, Name: {action_name}")
         if action_type == 'rotary':
             if action_name == 'frequency_down':
                 adjust_frequency(channel, -1)
@@ -52,3 +121,11 @@ def handle_midi_message(message, midi_out):
             handle_global_button(action_name, message.note, midi_out)
     else:
         print(f"Unhandled MIDI message: {message}")
+
+# Start the MIDI device monitor thread
+midi_monitor_thread = threading.Thread(target=midi_device_monitor, daemon=True)
+midi_monitor_thread.start()
+
+# Try to connect to MIDI devices at startup
+print("Looking for MIDI devices...")
+connect_midi_devices()

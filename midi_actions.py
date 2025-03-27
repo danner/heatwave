@@ -4,6 +4,7 @@ import json
 import copy
 from state import channels, adjust_frequency, adjust_volume, set_lights_to_current_state, channel_log, get_current_log_index, set_current_log_index
 from constants import base_control_numbers, global_button_notes
+from web_server import broadcast_channel_update
 
 # Function to build note_to_action dictionary
 def build_note_to_action():
@@ -78,3 +79,8 @@ def handle_global_button(button_name, note, midi_out):
             channels.update(channel_log[current_log_index])
             set_lights_to_current_state(midi_out)
             print(f"Moved back to log index {current_log_index}")
+
+def adjust_frequency(channel, value):
+    adjustment = 0.1 if channels[channel]['select'] else 1.0
+    channels[channel]['frequency'] += value * adjustment
+    broadcast_channel_update(channel)  # Add this line to broadcast the update

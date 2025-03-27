@@ -8,11 +8,14 @@ pygame.mixer.init(frequency=44100, size=-16, channels=1, buffer=4096)
 RATE = 44100  # Sampling rate
 AMPLITUDE = 0.5  # Default volume
 
-# Generate sine wave function
+# Generate sine wave function ensuring zero-crossings
 def generate_sine_wave(freq, amplitude, rate):
-    duration = 1 / freq  # Ensure the wave completes one cycle
-    t = np.linspace(0, duration, int(rate * duration), endpoint=False)
-    wave = amplitude * np.sin(2 * np.pi * freq * t)
+    # Ensure we have a complete number of cycles for smooth looping
+    cycles = max(1, int(rate / freq / 10))  # Use multiple cycles for better quality
+    # Number of samples needed for complete cycles
+    samples = int((cycles / freq) * rate)
+    t = np.linspace(0, 2 * np.pi * cycles, samples, endpoint=False)
+    wave = amplitude * np.sin(t)
     return wave.astype(np.float32)
 
 # Function to create and return a pygame Sound object
@@ -47,7 +50,11 @@ def update_pitches(channels):
         if freq != frequencies[i]:  # Only update if the frequency has changed
             print(f"Updating frequency for channel {i} to {freq}")
             frequencies[i] = freq
+            # Create new sound with zero-crossings at both ends
             wave = generate_sine_wave(freq, AMPLITUDE, RATE)
+            # Fade out current sound before stopping it
+            sounds[i].fadeout(50)  # Short 50ms fadeout
+            pygame.time.wait(50)   # Wait for fadeout to complete
             sounds[i].stop()
             sounds[i] = pygame.sndarray.make_sound((wave * 32767).astype(np.int16))
             sounds[i].set_volume(volumes[i])  # Respect the previously set volume

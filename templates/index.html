@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>HeatWave Control</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        h1 {
+            color: #e63946;
+        }
+        .channel {
+            background-color: white;
+            border-radius: 5px;
+            padding: 15px;
+            margin-bottom: 15px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        label {
+            display: inline-block;
+            width: 100px;
+            font-weight: bold;
+        }
+        .control {
+            margin: 10px 0;
+        }
+        input[type="range"] {
+            width: 300px;
+        }
+        .channels-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 15px;
+        }
+        .channel {
+            flex: 1 0 45%;
+            min-width: 300px;
+        }
+    </style>
+</head>
+<body>
+    <h1>HeatWave Control</h1>
+    
+    <div class="channels-container" id="channels-container">
+        <!-- Channels will be generated here -->
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <script>
+        const socket = io();
+        const channelControls = [];
+        
+        // Create UI for all 8 channels
+        function createChannelUIs() {
+            const container = document.getElementById('channels-container');
+            
+            for (let i = 0; i < 8; i++) {
+                const channelDiv = document.createElement('div');
+                channelDiv.className = 'channel';
+                channelDiv.innerHTML = `
+                    <h2>Channel ${i}</h2>
+                    <div class="control">
+                        <label for="frequency-${i}">Frequency:</label>
+                        <input type="range" id="frequency-${i}" min="20" max="500" step="0.1" value="110">
+                        <span id="frequencyValue-${i}">110 Hz</span>
+                    </div>
+                    <div class="control">
+                        <label for="volume-${i}">Volume:</label>
+                        <input type="range" id="volume-${i}" min="0" max="1" step="0.01" value="0.5">
+                        <span id="volumeValue-${i}">50%</span>
+                    </div>
+                    <div class="control">
+                        <label for="mute-${i}">Mute:</label>
+                        <input type="checkbox" id="mute-${i}">
+                    </div>
+                `;
+                container.appendChild(channelDiv);
+                
+                // Store references to controls
+                channelControls[i] = {
+                    frequencySlider: document.getElementById(`frequency-${i}`),
+                    frequencyValue: document.getElementById(`frequencyValue-${i}`),
+                    volumeSlider: document.getElementById(`volume-${i}`),
+                    volumeValue: document.getElementById(`volumeValue-${i}`),
+                    muteCheckbox: document.getElementById(`mute-${i}`)
+                };
+                
+                // Add event listeners
+                setupEventListeners(i);
+            }
+        }
+        
+        function setupEventListeners(channelIndex) {
+            const controls = channelControls[channelIndex];
+            
+            // Frequency slider
+            controls.frequencySlider.addEventListener('input', () => {
+                const value = parseFloat(controls.frequencySlider.value);
+                controls.frequencyValue.textContent = `${value.toFixed(1)} Hz`;
+                socket.emit('change_frequency', {
+                    channel: channelIndex,
+                    frequency: value
+                });
+            });
+            
+            // Volume slider
+            controls.volumeSlider.addEventListener('input', () => {
+                const value = parseFloat(controls.volumeSlider.value);
+                controls.volumeValue.textContent = `${Math.round(value * 100)}%`;
+                socket.emit('change_volume', {
+                    channel: channelIndex,
+                    volume: value
+                });
+            });
+            
+            // Mute checkbox
+            controls.muteCheckbox.addEventListener('change', () => {
+                socket.emit('change_mute', {
+                    channel: channelIndex,
+                    mute: controls.muteCheckbox.checked
+                });
+            });
+        }
+        
+        // Connect to WebSocket server
+        socket.on('connect', () => {
+            console.log('Connected to server');
+        });
+        
+        // Handle updates from the server
+        socket.on('update_channel', (data) => {
+            const channelIndex = data.channel;
+            const controls = channelControls[channelIndex];
+            
+            if (!controls) return;
+            
+            if (data.frequency !== undefined) {
+                controls.frequencySlider.value = data.frequency;
+                controls.frequencyValue.textContent = `${data.frequency.toFixed(1)} Hz`;
+            }
+            
+            if (data.volume !== undefined) {
+                controls.volumeSlider.value = data.volume;
+                controls.volumeValue.textContent = `${Math.round(data.volume * 100)}%`;
+            }
+            
+            if (data.mute !== undefined) {
+                controls.muteCheckbox.checked = data.mute;
+            }
+        });
+        
+        // Initialize UI
+        createChannelUIs();
+    </script>
+</body>
+</html>

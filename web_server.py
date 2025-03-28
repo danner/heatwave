@@ -1,4 +1,4 @@
-from flask import Flask, render_template
+from flask import Flask, render_template, jsonify
 from flask_socketio import SocketIO, emit
 import threading
 import time
@@ -19,18 +19,19 @@ channels_ref = None
 def index():
     return render_template('index.html')
 
+@app.route('/visualization')
+def visualization():
+    return render_template('visualization.html')
+
+@app.route('/api/channels')
+def get_channels():
+    # This should return the current state of your channels
+    return jsonify(channels)
+
 @socketio.on('connect')
 def handle_connect():
     print('Client connected')
-    if channels_ref:
-        # Send initial state for all channels
-        for i in range(8):
-            emit('update_channel', {
-                'channel': i,
-                'frequency': channels_ref[i]['frequency'],
-                'volume': channels_ref[i]['volume'],
-                'mute': channels_ref[i]['mute']
-            })
+    handle_request_all_channels()  # Reuse the same function
 
 @socketio.on('change_frequency')
 def handle_frequency_change(data):

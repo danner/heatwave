@@ -71,6 +71,12 @@
         <button id="play-button" class="global-button">Play</button>
         <button id="pause-button" class="global-button">Pause (Mute All)</button>
         <button id="record-button" class="global-button">Record State</button>
+        <button id="rewind-button" class="global-button">⏮ Rewind</button>
+        <button id="forward-button" class="global-button">⏭ Forward</button>
+    </div>
+    
+    <div class="nav-links">
+        <a href="/visualization" class="btn">View Sound Wave Visualization</a>
     </div>
     
     <div class="channels-container" id="channels-container">
@@ -166,10 +172,33 @@
         document.getElementById('record-button').addEventListener('click', () => {
             socket.emit('global_button', { button_name: 'record' });
         });
+
+        // Add listeners for navigation buttons
+        document.getElementById('rewind-button').addEventListener('click', () => {
+            socket.emit('global_button', { button_name: 'rewind' });
+        });
+
+        document.getElementById('forward-button').addEventListener('click', () => {
+            socket.emit('global_button', { button_name: 'fast_forward' });
+        });
         
         // Connect to WebSocket server
         socket.on('connect', () => {
             console.log('Connected to server');
+            
+            // Request the current state of all channels when connected or reconnected
+            socket.emit('request_all_channels');
+        });
+        
+        // Add reconnection handling
+        socket.on('disconnect', () => {
+            console.log('Disconnected from server');
+        });
+        
+        socket.on('reconnect', () => {
+            console.log('Reconnected to server');
+            // Request fresh data after reconnection
+            socket.emit('request_all_channels');
         });
         
         // Handle updates from the server

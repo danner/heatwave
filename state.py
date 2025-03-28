@@ -112,22 +112,24 @@ def record_current_state():
     print("Current state recorded")
 
 # Navigate forward in channel log
-def navigate_forward(midi_out):
+def navigate_forward(midi_out=None):
     global _current_log_index
     if _current_log_index < len(channel_log) - 1:
         _current_log_index += 1
         channels.update(channel_log[_current_log_index])
-        set_lights_to_current_state(midi_out)
+        if midi_out:
+            set_lights_to_current_state(midi_out)
         notify_all_channels_updated()
         print(f"Moved forward to log index {_current_log_index}")
 
 # Navigate backward in channel log
-def navigate_backward(midi_out):
+def navigate_backward(midi_out=None):
     global _current_log_index
     if _current_log_index > 0:
         _current_log_index -= 1
         channels.update(channel_log[_current_log_index])
-        set_lights_to_current_state(midi_out)
+        if midi_out:
+            set_lights_to_current_state(midi_out)
         notify_all_channels_updated()
         print(f"Moved back to log index {_current_log_index}")
 

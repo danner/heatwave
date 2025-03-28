@@ -1,0 +1,657 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rubens' Tube Simulation</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Add Socket.IO client library -->
+    <script src="https://cdn.socket.io/4.6.0/socket.io.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f0f0f0;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        h1 {
+            text-align: center;
+            margin-bottom: 10px;
+        }
+        .subtitle {
+            text-align: center;
+            color: #666;
+            margin-bottom: 30px;
+        }
+        .chart-container {
+            position: relative;
+            height: 400px;
+            width: 100%;
+            margin-bottom: 30px;
+        }
+        .controls {
+            display: flex;
+            justify-content: center;
+            flex-wrap: wrap;
+            gap: 15px;
+            margin: 20px 0;
+        }
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .control-label {
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        .controls button {
+            padding: 8px 16px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .controls button:hover {
+            background-color: #0056b3;
+        }
+        .controls input {
+            padding: 8px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        .nav-link {
+            text-align: center;
+            margin-top: 20px;
+        }
+        #tube {
+            width: 100%;
+            height: 200px;
+            position: relative;
+            background-color: #333;
+            border-radius: 10px;
+            overflow: hidden;
+            margin-bottom: 30px;
+        }
+        .flame {
+            position: absolute;
+            bottom: 0;
+            width: 6px;
+            background: linear-gradient(to top, #ff8c00, #ff4500, #ff0000);
+            border-radius: 2px 2px 0 0;
+            transform-origin: bottom center;
+        }
+        .physics-info {
+            background-color: #f8f9fa;
+            padding: 15px;
+            border-radius: 5px;
+            margin-top: 20px;
+        }
+        .physics-info p {
+            margin: 5px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Rubens' Tube Simulation</h1>
+        <div class="subtitle">Visualizing Standing Sound Waves in a Propane Tube</div>
+        
+        <div id="tube"></div>
+        
+        <div class="chart-container">
+            <canvas id="waveChart"></canvas>
+        </div>
+        
+        <div class="controls">
+            <div class="control-group">
+                <span class="control-label">Speed of Sound (m/s)</span>
+                <input type="number" id="speedOfSound" value="258" min="100" max="1000" step="1">
+            </div>
+            <div class="control-group">
+                <span class="control-label">Tube Length (m)</span>
+                <input type="number" id="tubeLength" value="3" min="1" max="10" step="0.1">
+            </div>
+            <div class="control-group">
+                <span class="control-label">Animation</span>
+                <div>
+                    <button id="pauseBtn">Pause</button>
+                    <button id="resumeBtn">Resume</button>
+                </div>
+            </div>
+        </div>
+        
+        <div class="physics-info">
+            <p><strong>Fundamental Frequency:</strong> <span id="fundamentalFreq">21.5</span> Hz</p>
+            <p><strong>Current Wavelength:</strong> <span id="wavelength">12</span> m</p>
+            <p><strong>Resonances:</strong> <span id="resonances"></span> Hz (odd harmonics only)</p>
+        </div>
+        
+        <div class="nav-link">
+            <a href="/">Back to Controls</a>
+        </div>
+    </div>
+
+    <script>
+        // Configuration for the chart
+        const ctx = document.getElementById('waveChart').getContext('2d');
+        const pointCount = 500; // Number of points to plot
+        
+        // Physics parameters
+        let speedOfSound = 258; // m/s - speed of sound in propane
+        let tubeLength = 3; // meters
+        let baseFrequency = 110; // Hz
+        let time = 0; // simulation time in seconds
+        
+        // Add physics parameters for damping and external pressure
+        let dampingCoefficient = 0.05; // Damping coefficient per meter
+        const externalPressure = 1.0;    // Normalized external pressure
+
+        // Add a constant for the averaging window (in seconds)
+        const FLOW_RATE_AVERAGING_WINDOW = 0.5;
+        
+        // Calculate how many frames this represents (based on our time increment)
+        const TIME_INCREMENT = 0.02;
+        const FRAMES_TO_AVERAGE = Math.ceil(FLOW_RATE_AVERAGING_WINDOW / TIME_INCREMENT);
+        
+        // Create a data structure to store flow rate history for each position
+        let flowRateHistory = Array(pointCount).fill().map(() => []);
+
+        // Add at the top with other variable declarations
+        let lastFrameTime = 0;
+
+        // Calculate fundamental frequency
+        function calculateFundamental() {
+            // For a tube with one closed end: f₁ = v/4L
+            return speedOfSound / (4 * tubeLength);
+        }
+        
+        // Tube visualization setup
+        const tube = document.getElementById('tube');
+        const flameCount = 100; // Number of flames along the tube
+        
+        // Create flames
+        for (let i = 0; i < flameCount; i++) {
+            const flame = document.createElement('div');
+            flame.className = 'flame';
+            flame.style.left = `${(i / flameCount) * 100}%`;
+            flame.style.height = '10px'; // Default height
+            tube.appendChild(flame);
+        }
+        
+        // Get all flames for animation
+        const flames = document.querySelectorAll('.flame');
+        
+        // Chart setup
+        const chart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: Array(pointCount).fill(''),
+                datasets: [
+                    {
+                        label: 'Combined Wave',
+                        data: Array(pointCount).fill(0),
+                        borderColor: 'rgb(75, 192, 192)',
+                        borderWidth: 2,
+                        fill: false,
+                        tension: 0
+                    },
+                    {
+                        label: 'Standing Wave Envelope',
+                        data: Array(pointCount).fill(0),
+                        borderColor: 'rgba(255, 99, 132, 0.5)',
+                        borderDash: [5, 5],
+                        borderWidth: 1,
+                        fill: false,
+                        tension: 0
+                    },
+                    {
+                        label: 'Negative Envelope',
+                        data: Array(pointCount).fill(0),
+                        borderColor: 'rgba(255, 99, 132, 0.5)',
+                        borderDash: [5, 5],
+                        borderWidth: 1,
+                        fill: false,
+                        tension: 0
+                    },
+                    {
+                        label: 'Flow Rate',
+                        data: Array(pointCount).fill(0),
+                        borderColor: 'rgba(153, 102, 255, 1)',
+                        borderWidth: 2,
+                        fill: false,
+                        tension: 0,
+                        yAxisID: 'flowrate'
+                    }
+                    // Reflection datasets will be added dynamically
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: {
+                    duration: 0 // No animation for better performance
+                },
+                scales: {
+                    x: {
+                        title: {
+                            display: true,
+                            text: 'Position along tube (m)'
+                        },
+                        ticks: {
+                            callback: function(value, index) {
+                                // Show only some tick marks
+                                if (index % 50 === 0) {
+                                    return (index / pointCount * tubeLength).toFixed(1);
+                                }
+                                return null;
+                            }
+                        }
+                    },
+                    y: {
+                        min: -1.2,
+                        max: 1.2,
+                        title: {
+                            display: true,
+                            text: 'Pressure Amplitude'
+                        }
+                    },
+                    flowrate: {
+                        min: -1.5,
+                        max: 1.5,
+                        position: 'right',
+                        title: {
+                            display: true,
+                            text: 'Flow Rate'
+                        },
+                        grid: {
+                            drawOnChartArea: false
+                        }
+                    }
+                }
+            }
+        });
+
+        // Variables for tracking state
+        let isPaused = false;
+        let lastChannelData = '';
+        let animationFrameId = null;
+        
+        // Channel data from server
+        let channelData = {};
+        
+        // Setup Socket.IO connection
+        const socket = io();
+
+        // Connect to WebSocket server
+        socket.on('connect', () => {
+            console.log('Connected to server');
+            
+            // Request the current state of all channels when connected
+            socket.emit('request_all_channels');
+        });
+
+        // Add reconnection handling
+        socket.on('disconnect', () => {
+            console.log('Disconnected from server');
+        });
+
+        socket.on('reconnect', () => {
+            console.log('Reconnected to server');
+            // Request fresh data after reconnection
+            socket.emit('request_all_channels');
+        });
+
+        // Listen for channel updates
+        socket.on('update_channel', function(data) {
+            // Initialize the channel if it doesn't exist yet
+            if (!channelData[data.channel]) {
+                channelData[data.channel] = {};
+            }
+            
+            // Update the specific channel that changed
+            channelData[data.channel] = { 
+                ...channelData[data.channel], 
+                ...data 
+            };
+            
+            // Update physics info since data changed
+            updatePhysicsInfo();
+        });
+
+        // Listen for new channel creation
+        socket.on('new_channel', function(data) {
+            // Add the new channel to our data
+            channelData[data.channel] = data;
+            updatePhysicsInfo();
+        });
+
+        // Listen for channel deletion
+        socket.on('delete_channel', function(data) {
+            if (channelData[data.channel]) {
+                delete channelData[data.channel];
+                updatePhysicsInfo();
+            }
+        });
+
+        // Generate standing wave for a closed-end tube with damping
+        function generateStandingWave(position, time, reflectionCount = 5) {
+            // Combined wave (sum of all reflections and channels)
+            let combinedWave = 0;
+            
+            // Array to store individual reflection contributions
+            let reflectionWaves = Array(reflectionCount).fill(0);
+
+            // Sum the contributions from the active channels
+            for (const channelId in channelData) {
+                const channel = channelData[channelId];
+
+                // Skip muted channels
+                if (channel.mute) continue;
+
+                const freq = channel.frequency || baseFrequency;
+                const amplitude = channel.volume || 0.5;
+
+                // Calculate wavelength
+                const wavelength = speedOfSound / freq;
+
+                // Wave number
+                const k = 2 * Math.PI / wavelength;
+
+                // Angular frequency
+                const omega = 2 * Math.PI * freq;
+
+                // Add contributions from multiple reflections
+                for (let r = 0; r < reflectionCount; r++) {
+                    const reflectionDamping = Math.exp(-dampingCoefficient * r * tubeLength);
+                    const reflectionSign = r % 2 === 0 ? 1 : -1; // Alternate phase for reflections
+
+                    // Standing wave with damping for this specific reflection
+                    const reflectionContribution = amplitude * reflectionDamping * 
+                        Math.cos(omega * time) * Math.sin(k * (position + r * tubeLength)) * reflectionSign;
+                    
+                    // Add to the specific reflection's wave
+                    reflectionWaves[r] += reflectionContribution;
+                    
+                    // Add to combined wave
+                    combinedWave += reflectionContribution;
+                }
+            }
+
+            return { 
+                combinedWave, 
+                reflectionWaves 
+            };
+        }
+
+        // Calculate pressure gradient at a specific position
+        function calculatePressureGradient(waveData, index) {
+            // Using central difference method to calculate pressure gradient
+            if (index <= 0 || index >= waveData.length - 1) {
+                return 0; // Return zero gradient at boundaries
+            }
+            
+            // Calculate position step
+            const dx = tubeLength / pointCount;
+            
+            // Calculate gradient using central difference
+            return (waveData[index + 1] - waveData[index - 1]) / (2 * dx);
+        }
+
+        // Calculate flow rate based on pressure difference
+        function calculateFlowRate(pressure) {
+            // Calculate pressure difference
+            const pressureDiff = pressure - externalPressure;
+            
+            // Apply Bernoulli's principle: flow rate is proportional to the square root of pressure difference
+            return Math.sqrt(Math.abs(pressureDiff)) * Math.sign(pressureDiff);
+        }
+        
+        // Calculate the average flow rate over the time window
+        function calculateAverageFlowRate(currentFlowRate, position) {
+            // Get the history for this position
+            const history = flowRateHistory[position];
+            
+            // Add the current flow rate to the history
+            history.push(currentFlowRate);
+            
+            // Limit history length to our averaging window
+            if (history.length > FRAMES_TO_AVERAGE) {
+                history.shift();
+            }
+            
+            // Calculate the average
+            const sum = history.reduce((acc, val) => acc + val, 0);
+            return history.length > 0 ? sum / history.length : 0;
+        }
+
+        // Create an array to store the last 10 heights for each flame
+        const flameHistory = Array.from({ length: flameCount }, () => Array(10).fill(10)); // Initialize with default height of 10
+
+        function animateTube(waveData) {
+            for (let i = 0; i < flames.length; i++) {
+                const dataIndex = Math.floor((i / flames.length) * waveData.length);
+
+                // Get pressure at this position
+                const pressure = waveData[dataIndex];
+                
+                // For a standing wave, flow rate should be proportional to the GRADIENT of pressure
+                // Calculate pressure gradient at this position
+                const pressureGradient = calculatePressureGradient(waveData, dataIndex);
+                
+                // Flow rate is proportional to pressure gradient
+                const instFlowRate = pressureGradient;
+                
+                // Get averaged flow rate
+                const avgFlowRate = calculateAverageFlowRate(instFlowRate, dataIndex);
+                
+                // Use higher power for more dramatic contrast in flame heights
+                const flowRate = Math.pow(Math.abs(avgFlowRate), 2) * Math.sign(avgFlowRate);
+
+                // Calculate the new flame height with greater amplification
+                const newHeight = Math.max(5, (Math.abs(flowRate) * 200 + 5));
+
+                // Update the flame's height history
+                flameHistory[i].shift(); // Remove the oldest height
+                flameHistory[i].push(newHeight); // Add the new height
+
+                // Calculate the average height over the last 10 frames
+                const averageHeight = flameHistory[i].reduce((sum, h) => sum + h, 0) / flameHistory[i].length;
+
+                // Update flame height
+                flames[i].style.height = `${averageHeight}px`;
+
+                // Create a three-color gradient for all flames
+                flames[i].style.background = `
+                    linear-gradient(to top,
+                    rgb(0, 0, 255),     
+                    rgb(255, 255, 200),
+                    rgb(255, 255, 100),
+                    rgb(255, 100, 0))`;
+            }
+        }
+
+        // Function to generate the standing wave envelope with damping
+        function generateEnvelope(position) {
+            let maxWave = 0;
+            
+            // Find the maximum amplitude at this position from all channels
+            for (const channelId in channelData) {
+                const channel = channelData[channelId];
+                
+                // Skip muted channels
+                if (channel.mute) continue;
+                
+                const freq = channel.frequency || baseFrequency;
+                const amplitude = channel.volume || 0.5;
+                
+                // Calculate wavelength
+                const wavelength = speedOfSound / freq;
+                
+                // Wave number
+                const k = 2 * Math.PI / wavelength;
+                
+                // Apply damping factor
+                const dampingFactor = Math.exp(-dampingCoefficient * position * (freq / 100));
+                
+                // The envelope is just sin(k*x) with damping
+                maxWave += amplitude * dampingFactor * Math.abs(Math.sin(k * position));
+            }
+            
+            return maxWave;
+        }
+
+        // Function to update the physics information display
+        function updatePhysicsInfo() {
+            const fundamental = calculateFundamental();
+            document.getElementById('fundamentalFreq').textContent = fundamental.toFixed(1);
+            
+            // Calculate wavelength for current frequency
+            const wavelength = speedOfSound / baseFrequency;
+            document.getElementById('wavelength').textContent = wavelength.toFixed(1);
+            
+            // Calculate resonances (odd harmonics only)
+            const resonances = [1, 3, 5, 7, 9, 11, 13, 15, 17, 19].map(n => (n * fundamental).toFixed(1)).join(', ') + '...';
+            document.getElementById('resonances').textContent = resonances;
+        }
+
+        // Function to update the chart with new data
+        function updateChart() {
+            if (isPaused) return;
+
+            // Calculate actual elapsed time since last frame
+            const now = performance.now();
+            const deltaTime = now - (lastFrameTime || now);
+            lastFrameTime = now;
+            
+            // Use a fixed physics timestep that's independent of frame rate
+            const physicsStep = 1/190; // 200Hz physics update (much higher than display rate)
+            time += physicsStep;
+
+            const positions = Array(pointCount).fill().map((_, i) => (i / pointCount) * tubeLength);
+
+            // Generate the wave data with reflections
+            const waveDataArray = positions.map(pos => generateStandingWave(pos, time, reflections));
+            
+            // Extract combined wave data for main visualization
+            const waveData = waveDataArray.map(data => data.combinedWave);
+            
+            // Calculate instantaneous flow rate data
+            const instantFlowRateData = waveData.map((pressure, index) => {
+                // Use pressure gradient for flow rate calculation
+                return calculatePressureGradient(waveData, index);
+            });
+            
+            // Calculate the average flow rate using time window
+            const averageFlowRateData = instantFlowRateData.map((flowRate, index) => 
+                calculateAverageFlowRate(flowRate, index));
+
+            const envelopeData = positions.map(pos => generateEnvelope(pos));
+            const negativeEnvelopeData = envelopeData.map(val => -val);
+
+            // Update main datasets
+            chart.data.datasets[0].data = waveData;
+            chart.data.datasets[1].data = envelopeData;
+            chart.data.datasets[2].data = negativeEnvelopeData;
+            chart.data.datasets[3].data = averageFlowRateData; // Use average flow rate
+            
+            // Remove any extra datasets beyond the main ones (combined wave, envelopes, flow rate)
+            while (chart.data.datasets.length > 4) {
+                chart.data.datasets.pop();
+            }
+
+            chart.update();
+            animateTube(waveData);
+
+            time += TIME_INCREMENT;
+            animationFrameId = requestAnimationFrame(updateChart);
+        }
+
+        // Control handlers
+        document.getElementById('speedOfSound').addEventListener('input', function(e) {
+            speedOfSound = parseFloat(e.target.value);
+            updatePhysicsInfo();
+        });
+        
+        document.getElementById('tubeLength').addEventListener('input', function(e) {
+            tubeLength = parseFloat(e.target.value);
+            updatePhysicsInfo();
+        });
+                
+        document.getElementById('pauseBtn').addEventListener('click', function() {
+            isPaused = true;
+            if (animationFrameId) {
+                cancelAnimationFrame(animationFrameId);
+                animationFrameId = null;
+            }
+        });
+        
+        document.getElementById('resumeBtn').addEventListener('click', function() {
+            if (isPaused) {
+                isPaused = false;
+                updateChart(); // Restart animation
+            }
+        });
+
+        // Update physics controls to include damping control
+        const controlsDiv = document.querySelector('.controls');
+        const dampingControl = document.createElement('div');
+        dampingControl.className = 'control-group';
+        dampingControl.innerHTML = `
+            <span class="control-label">Damping</span>
+            <input type="range" id="dampingSlider" min="0" max="0.2" step="0.01" value="${dampingCoefficient}">
+            <span id="dampingValue">${dampingCoefficient}</span>
+        `;
+        controlsDiv.appendChild(dampingControl);
+
+        // Add event listener for the damping slider
+        document.getElementById('dampingSlider').addEventListener('input', function(e) {
+            dampingCoefficient = parseFloat(e.target.value);
+            document.getElementById('dampingValue').textContent = dampingCoefficient.toFixed(2);
+            
+            // Trigger an immediate update to the visualization
+            if (!isPaused && !animationFrameId) {
+                updateChart();
+            }
+        });
+
+        const reflectionsControl = document.createElement('div');
+        reflectionsControl.className = 'control-group';
+        reflectionsControl.innerHTML = `
+            <span class="control-label">Reflections</span>
+            <input type="number" id="reflectionsInput" value="5" min="1" max="10" step="1">
+        `;
+        controlsDiv.appendChild(reflectionsControl);
+
+        let reflections = 5; // Default number of reflections
+
+        document.getElementById('reflectionsInput').addEventListener('input', function(e) {
+            reflections = parseInt(e.target.value, 10);
+            // Force immediate chart update to show new reflections
+            if (!isPaused) {
+                if (animationFrameId) {
+                    cancelAnimationFrame(animationFrameId);
+                    animationFrameId = null;
+                }
+                updateChart();
+            }
+        });
+
+        // Update the dataset label for flow rate
+        chart.data.datasets[3].label = 'Average Flow Rate (1/4 sec)';
+
+        // Start the simulation
+        updatePhysicsInfo();
+        updateChart();
+    </script>
+</body>
+</html>

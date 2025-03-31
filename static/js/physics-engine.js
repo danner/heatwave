@@ -11,12 +11,14 @@ let dampingCoefficient = 0.05; // Damping coefficient per meter
 const externalPressure = 1.0; // Normalized external pressure
 let reflections = 5; // Default number of reflections
 
-// Add these at the top with other physics parameters
-// Constants for flow rate calculations
-const FLOW_AVERAGING_TIME = 0.15;  // seconds of physics time to average over
+// Constants for T-network model
+const SPECIFIC_HEAT_RATIO = 1.4;  // γ (gamma) for propane
+const DENSITY_PROPANE = 1.9;     // kg/m³ at room temperature
+const HOLE_IMPEDANCE_FACTOR = 0.6; // End correction factor for holes
 
 // Physics data storage
-let flowRateTimeHistory = {};  // Store history as {position: [{time, value}]}
+const PRESSURE_AVERAGING_TIME = 0.15;  // seconds of physics time to average over
+let pressureTimeHistory = {};  // Store history as {position: [{time, value}]}
 let normalizedFlameFactors = []; // Precalculated factors for flames
 
 // Calculate fundamental frequency with end correction
@@ -133,53 +135,6 @@ function generateEnvelope(position) {
     return maxWave;
 }
 
-// Calculate flow rate at a specific position - more physically accurate model
-function calculateFlowRate(waveData, index, time) {
-    if (index <= 0 || index >= waveData.length - 1) {
-        return 0; // Return zero at boundaries
-    }
-    
-    const position = (index / pointCount) * tubeLength;
-    let totalFlowRate = 0;
-    
-    // For each active channel, calculate its contribution to flow rate
-    for (const channelId in channelData) {
-        const channel = channelData[channelId];
-        if (channel.mute || channel.volume === 0) continue;
-        
-        const freq = channel.frequency || baseFrequency;
-        const amplitude = channel.volume || 0.5;
-        
-        // Calculate wavelength and wave properties
-        const wavelength = speedOfSound / freq;
-        const k = 2 * Math.PI / wavelength;  // Wave number
-        const omega = 2 * Math.PI * freq;    // Angular frequency
-        
-        // In a standing wave, velocity is 90 degrees out of phase with pressure
-        // This is a key physics principle in acoustic standing waves
-        
-        // Calculate spatial component with quarter-wavelength shift to account for
-        // end corrections in Rijke tube (prevents zeros at certain frequencies)
-        const spatialPhase = Math.PI / 2; // 90 degree phase shift
-        const positionFactor = Math.cos(k * position - spatialPhase);
-        
-        // Calculate temporal component 
-        const timeFactor = Math.sin(omega * time);
-        
-        // Calculate contributions without using reflections directly
-        // This prevents the mathematical artifacts at 50Hz intervals
-        const flowContribution = amplitude * positionFactor * timeFactor;
-        
-        // Add to the total flow rate
-        totalFlowRate += flowContribution;
-    }
-    
-    // Apply damping based on position - use less aggressive damping
-    totalFlowRate *= Math.exp(-dampingCoefficient * 0.5 * position);
-    
-    return totalFlowRate;
-}
-
 // Calculate the average flow rate over a time window (physics time-based)
 function calculateAverageFlowRate(currentFlowRate, position, currentTime) {
     // Initialize history for this position if it doesn't exist
@@ -214,20 +169,7 @@ function calculateAverageFlowRate(currentFlowRate, position, currentTime) {
     return totalWeight > 0 ? weightedSum / totalWeight : 0;
 }
 
-// Calculate flow rates for each flame position - more physically accurate model
-function calculateFlameFlowRates(waveData, flameCount, currentTime) {
-    return Array.from({ length: flameCount }, (_, i) => {
-        const dataIndex = Math.floor((i / flameCount) * waveData.length);
-        
-        // Calculate flow rate at this position
-        const flowRate = calculateFlowRate(waveData, dataIndex, currentTime);
-        
-        // Store in history and get time-averaged value
-        return calculateAverageFlowRate(flowRate, dataIndex, currentTime);
-    });
-}
-
-// Convert flow rates to normalized factors for gas conservation - moved from flame-visualizer.js
+// Convert flow rates to normalized factors for gas conservation
 function normalizeFlowFactors(flowRates) {
     const MIN_FACTOR = 0.125;  // 1/8 of normal height
     const MAX_FACTOR = 4.0;    // 4x normal height
@@ -235,8 +177,15 @@ function normalizeFlowFactors(flowRates) {
     // Calculate the total absolute flow across all flames
     const totalFlow = flowRates.reduce((sum, rate) => sum + Math.abs(rate), 0);
     
+    // Check if total flow is too small (near-zero pressure condition)
+    const LOW_FLOW_THRESHOLD = 0.001;
+    if (totalFlow < LOW_FLOW_THRESHOLD) {
+        // Return uniform factors when pressure is too low
+        return Array(flowRates.length).fill(1.0);
+    }
+    
     // Calculate the average flow per flame
-    const averageFlow = totalFlow / flowRates.length || 1;
+    const averageFlow = totalFlow / flowRates.length;
     
     // Normalize each flow rate relative to the total flow
     const oscillationFactors = flowRates.map(rate => {
@@ -257,34 +206,183 @@ function normalizeFlowFactors(flowRates) {
     const totalFactor = oscillationFactors.reduce((sum, factor) => sum + factor, 0);
     const normalizeRatio = flowRates.length / totalFactor;
     
-    return oscillationFactors.map(factor => factor * normalizeRatio);
+    // Final normalization with additional clamping to ensure we don't exceed limits
+    return oscillationFactors.map(factor => {
+        const normalizedFactor = factor * normalizeRatio;
+        // Apply final clamping to ensure we don't exceed limits
+        return Math.max(MIN_FACTOR, Math.min(MAX_FACTOR, normalizedFactor));
+    });
 }
 
-// Update physics for flames - connects physics loop to flame visualization
+// Update physics for flames - simplified to use pressure directly without normalization
 function updateFlamePhysics(waveData, flameCount, currentTime) {
-    // Calculate flow rates based on current wave data
-    const flowRates = Array.from({ length: flameCount }, (_, i) => {
-        const dataIndex = Math.floor((i / flameCount) * waveData.length);
+    // Get positions for flame holes
+    const holePositions = Array.from(
+        { length: flameCount }, 
+        (_, i) => i * HOLE_SPACING
+    );
+    
+    // Get active frequencies
+    const activeFrequencies = [];
+    const activeAmplitudes = [];
+    
+    for (const channelId in channelData) {
+        const channel = channelData[channelId];
+        if (!channel.mute && channel.volume > 0) {
+            activeFrequencies.push(channel.frequency || baseFrequency);
+            activeAmplitudes.push(channel.volume || 0.5);
+        }
+    }
+    
+    // Initialize pressure array
+    const flamePressures = Array(flameCount).fill(0);
+    
+    // Sum contributions from each active frequency
+    for (let f = 0; f < activeFrequencies.length; f++) {
+        const frequency = activeFrequencies[f];
+        const amplitude = activeAmplitudes[f];
         
-        // Calculate flow rate at this position
-        const flowRate = calculateFlowRate(waveData, dataIndex, currentTime);
+        // Calculate pressures at hole positions
+        const pressures = calculateTNetworkPressures(frequency, holePositions);
         
-        // Store in history and get time-averaged value
-        return calculateAverageFlowRate(flowRate, dataIndex, currentTime);
+        // Calculate the angular frequency once
+        const omega = 2 * Math.PI * frequency;
+        const timeComponent = Math.sin(omega * currentTime);
+        
+        // Add pressure contribution for this frequency at each hole position
+        for (let i = 0; i < flameCount; i++) {
+            flamePressures[i] += amplitude * pressures[i] * timeComponent;
+        }
+    }
+    
+    // Calculate time-averaged pressures - use directly for flames
+    const averagedPressures = flamePressures.map((pressure, i) => {
+        const position = i * HOLE_SPACING;
+        return Math.abs(calculateAveragePressure(position, pressure, currentTime));
     });
     
-    // Normalize flow rates to conserve gas
-    normalizedFlameFactors = normalizeFlowFactors(flowRates);
+    // No normalization - use pressure values directly 
+    window.normalizedFlameFactors = averagedPressures;
     
-    // Expose to global scope for flame visualization
-    window.normalizedFlameFactors = normalizedFlameFactors;
-    
-    return normalizedFlameFactors;
+    return averagedPressures;
 }
 
+// Calculate time-averaged pressure at a position
+function calculateAveragePressure(position, currentPressure, currentTime) {
+    // Initialize history for this position if it doesn't exist
+    if (!pressureTimeHistory[position]) {
+        pressureTimeHistory[position] = [];
+    }
+    
+    const history = pressureTimeHistory[position];
+    
+    // Add the current pressure to the history with the physics timestamp
+    history.push({ time: currentTime, value: currentPressure });
+    
+    // Remove entries older than our averaging window based on physics time
+    const cutoffTime = currentTime - PRESSURE_AVERAGING_TIME;
+    while (history.length > 0 && history[0].time < cutoffTime) {
+        history.shift();
+    }
+    
+    // Calculate the time-weighted average
+    let weightedSum = 0;
+    let totalWeight = 0;
+    
+    for (let i = 0; i < history.length; i++) {
+        // More recent values get higher weight
+        const age = currentTime - history[i].time;
+        const weight = 1.0 - (age / PRESSURE_AVERAGING_TIME);
+        
+        weightedSum += history[i].value * weight;
+        totalWeight += weight;
+    }
+    
+    return totalWeight > 0 ? weightedSum / totalWeight : 0;
+}
+
+// T-network model for Rubens' flame tube
+function calculateTNetworkPressures(frequency, positions) {
+    // Convert angular frequency
+    const omega = 2 * Math.PI * frequency;
+    
+    // Calculate wave number (k = ω/c)
+    const k = omega / speedOfSound;
+    
+    // Calculate base acoustic impedance (Z₀)
+    const Z0 = DENSITY_PROPANE * speedOfSound;
+    
+    // Array to store calculated pressures at each position
+    const pressures = new Array(positions.length);
+    
+    // Calculate for each position
+    for (let i = 0; i < positions.length; i++) {
+        const x = positions[i];
+        
+        // Transmission line impedance (tube segment)
+        // Z = Z₀ * (1 / sin(k*L)) - using actual hole spacing
+        const segmentImpedance = Z0 / Math.sin(k * HOLE_SPACING);
+        
+        // Shunt impedance (hole) - now includes the damping coefficient as a multiplier
+        // Z_hole = Z₀ * (k * r * (1 + HOLE_IMPEDANCE_FACTOR)) * dampingFactor
+        const dampingFactor = 1 + dampingCoefficient * 2; // Converts user damping into impedance scaling
+        const holeImpedance = Z0 * k * (holeSize / 2) * (1 + HOLE_IMPEDANCE_FACTOR) * dampingFactor;
+        
+        // Calculate pressure at position using impedance model
+        // P(x) = P₀ * cos(k*x) + j * (Z₀/Z_hole) * sin(k*x)
+        const incidentPressure = Math.cos(k * x);
+        
+        // Apply tube losses related to distance based on damping coefficient
+        const positionDamping = Math.exp(-dampingCoefficient * x);
+        const reflectedPressure = (Z0 / holeImpedance) * Math.sin(k * x);
+        
+        // Total pressure magnitude at this position, with position-based damping applied once
+        pressures[i] = Math.sqrt(
+            (incidentPressure * incidentPressure) + 
+            (reflectedPressure * reflectedPressure)
+        ) * positionDamping;
+    }
+    
+    return pressures;
+}
+
+// Calculate pressure distribution for the chart
+function calculatePressureDistribution(positions, currentTime) {
+    // Get active frequencies
+    const activeFrequencies = [];
+    const activeAmplitudes = [];
+    
+    for (const channelId in channelData) {
+        const channel = channelData[channelId];
+        if (!channel.mute && channel.volume > 0) {
+            activeFrequencies.push(channel.frequency || baseFrequency);
+            activeAmplitudes.push(channel.volume || 0.5);
+        }
+    }
+    
+    // Initialize pressure distribution
+    const pressureDistribution = new Array(positions.length).fill(0);
+    
+    // Sum contributions from each active frequency
+    for (let f = 0; f < activeFrequencies.length; f++) {
+        const frequency = activeFrequencies[f];
+        const amplitude = activeAmplitudes[f];
+        
+        // Calculate pressures using T-network model
+        const pressures = calculateTNetworkPressures(frequency, positions);
+        
+        // Add this frequency's contribution to total pressure
+        for (let i = 0; i < positions.length; i++) {
+            pressureDistribution[i] += amplitude * pressures[i];
+        }
+    }
+    
+    return pressureDistribution;
+}
+
+// Export necessary functions
 window.calculateFundamental = calculateFundamental;
 window.generateStandingWave = generateStandingWave;
-window.calculatePressureGradient = calculatePressureGradient;
 window.generateEnvelope = generateEnvelope;
-window.calculateFlowRate = calculateFlowRate;
 window.updateFlamePhysics = updateFlamePhysics;
+window.calculatePressureDistribution = calculatePressureDistribution;

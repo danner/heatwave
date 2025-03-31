@@ -108,16 +108,32 @@ function updateChartData(waveData) {
     
     const positions = Array(pointCount).fill().map((_, i) => (i / pointCount) * tubeLength);
 
-    // Use the current time for flow calculations - get from the global state
+    // Use the current time for calculations
     const currentTime = window.time || 0;
     
-    // Calculate flow rate data with the new physics-based model
-    const instantFlowRateData = positions.map((position, index) => 
-        calculateFlowRate(waveData, index, currentTime));
+    // Calculate the pressure distribution using the T-network model
+    const pressureDistribution = calculatePressureDistribution(positions, currentTime);
     
-    // Calculate the average flow rate using time window
-    const averageFlowRateData = instantFlowRateData.map((flowRate, index) => 
-        calculateAverageFlowRate(flowRate, index));
+    // Normalize the pressure distribution for display
+    let normalizedPressureDistribution = [...pressureDistribution];
+    const maxPressure = Math.max(...pressureDistribution.map(Math.abs));
+    if (maxPressure > 0) {
+        normalizedPressureDistribution = pressureDistribution.map(p => p / maxPressure);
+    }
+
+    // Get the flame height factors
+    const normalizedFactors = window.normalizedFlameFactors || Array(window.flameCount).fill(1);
+    
+    // Resample for chart display - convert from flame positions to chart positions
+    const resampledFactors = Array(pointCount).fill(0);
+    for (let i = 0; i < pointCount; i++) {
+        const position = (i / pointCount) * tubeLength;
+        const flameIndex = Math.floor(position / HOLE_SPACING);
+        
+        if (flameIndex < normalizedFactors.length) {
+            resampledFactors[i] = normalizedFactors[flameIndex];
+        }
+    }
 
     const envelopeData = positions.map(pos => generateEnvelope(pos));
     const negativeEnvelopeData = envelopeData.map(val => -val);
@@ -126,13 +142,27 @@ function updateChartData(waveData) {
     chart.data.datasets[0].data = waveData;
     chart.data.datasets[1].data = envelopeData;
     chart.data.datasets[2].data = negativeEnvelopeData;
-    chart.data.datasets[3].data = averageFlowRateData;
+    chart.data.datasets[3].data = normalizedPressureDistribution;
     
-    // Remove any extra datasets beyond the main ones
-    while (chart.data.datasets.length > 4) {
-        chart.data.datasets.pop();
+    // Add or update the flame factors dataset
+    if (chart.data.datasets.length <= 4) {
+        chart.data.datasets.push({
+            label: 'Flame Height Factors',
+            data: resampledFactors,
+            borderColor: 'rgba(255, 159, 64, 1)',
+            borderWidth: 2,
+            fill: false,
+            tension: 0,
+            yAxisID: 'flowrate'
+        });
+    } else {
+        chart.data.datasets[4].data = resampledFactors;
     }
 
+    // Update the dataset labels
+    chart.data.datasets[3].label = 'Pressure Distribution';
+    chart.options.scales.flowrate.title.text = 'Pressure & Flame Factors';
+    
     chart.update();
 }
 

@@ -1,8 +1,9 @@
 // Main visualization.js - Acts as the orchestrator module
 
 // Define globals at the top - ONLY HERE, not in other files
+const HOLE_SPACING = 0.02; // 2cm spacing between holes
 window.pointCount = 500; // Number of points to plot
-window.flameCount = 100; // Number of flames along the tube
+window.flameCount = Math.floor(tubeLength / HOLE_SPACING); // Calculate flame count from tube length
 window.channelData = {};
 window.isPaused = false;
 window.animationFrameId = null;
@@ -11,6 +12,10 @@ window.time = 0;
 // Initialize everything when DOM is loaded - moved to end of file
 document.addEventListener('DOMContentLoaded', function() {
     console.log("DOM loaded, initializing components...");
+    
+    // Calculate flame count based on tube length and hole spacing
+    window.flameCount = Math.floor(tubeLength / HOLE_SPACING);
+    console.log(`Setting up tube with ${window.flameCount} flames at ${HOLE_SPACING}m spacing`);
     
     // Wait for modules to be ready before initializing
     // Each module should expose an initialization function

@@ -73,16 +73,37 @@ function updateFlameAppearance(flameElement, heightRatio) {
     flameElement.style.width = `${Math.min(20, flameWidth)}px`;
 }
 
-// Main flame animation function - now only handles visual updates
+// Main flame animation function - now directly uses pressure values
 function animateFlames() {
-    // Get normalized factors from physics engine
-    const normalizedFactors = window.normalizedFlameFactors || Array(flames.length).fill(1);
+    // Get pressure values from physics engine
+    const pressureValues = window.normalizedFlameFactors || Array(flames.length).fill(1);
     
-    // Calculate base height based on propane pressure
-    const baseHeight = 20 + (propanePressure * 20);
+    // Base height constant - this will be multiplied by pressure
+    const baseHeight = 20;
+    
+    // Scale factor to make flames visible (since pressure values are typically small)
+    const pressureScaleFactor = 50 * propanePressure;
     
     // Update visual appearance of flames
-    updateFlameVisuals(normalizedFactors, baseHeight);
+    for (let i = 0; i < flames.length; i++) {
+        // Calculate new height based directly on pressure values
+        const newHeight = baseHeight + pressureValues[i] * pressureScaleFactor;
+        
+        // Update flame's height history (for visual smoothing only)
+        flameHistory[i].shift();
+        flameHistory[i].push(newHeight);
+        
+        // Calculate the average height over the last frames for visual smoothing
+        const averageHeight = flameHistory[i].reduce((sum, h) => sum + h, 0) / 
+                              flameHistory[i].length;
+        
+        // Apply height to flame
+        flames[i].style.height = `${Math.max(5, averageHeight)}px`;
+        
+        // Calculate intensity based on relative height
+        const heightRatio = averageHeight / baseHeight;
+        updateFlameAppearance(flames[i], heightRatio);
+    }
 }
 
 // Expose the function to the global scope

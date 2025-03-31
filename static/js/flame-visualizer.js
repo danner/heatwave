@@ -1,10 +1,9 @@
 // Flame visualization and animation
 
 let flames = []; // Will be populated after DOM loads
-let flameHistory = []; // Will be populated after DOM loads
-let flowRateHistory = []; // Will be populated after DOM loads
+let flameHistory = []; // Will be populated after DOM loads - for visual smoothing only
 
-// Initialize flame elements - renamed to match calling convention
+// Initialize flame elements
 function initializeFlames() {
     console.log("Initializing flames with count:", window.flameCount);
     const tube = document.getElementById('tube');
@@ -21,66 +20,8 @@ function initializeFlames() {
     // Get all flames for animation
     flames = document.querySelectorAll('.flame');
     
-    // Create flame history arrays for smoothing
-    flameHistory = Array.from({ length: window.flameCount }, () => Array(10).fill(20));
-    
-    // Create flow rate history arrays
-    flowRateHistory = Array(window.pointCount).fill().map(() => []);
-}
-
-// Calculate the average flow rate over the time window
-function calculateAverageFlowRate(currentFlowRate, position) {
-    // Get the history for this position
-    const history = flowRateHistory[position];
-    
-    // Add the current flow rate to the history
-    history.push(currentFlowRate);
-    
-    // Limit history length to our averaging window
-    if (history.length > FRAMES_TO_AVERAGE) {
-        history.shift();
-    }
-    
-    // Calculate the average
-    const sum = history.reduce((acc, val) => acc + val, 0);
-    return history.length > 0 ? sum / history.length : 0;
-}
-
-// Calculate flow rates for each flame position
-function calculateFlameFlowRates(waveData) {
-    return Array.from({ length: flames.length }, (_, i) => {
-        const dataIndex = Math.floor((i / flames.length) * waveData.length);
-        
-        // Get pressure and calculate pressure gradient
-        const pressure = waveData[dataIndex];
-        const pressureGradient = calculatePressureGradient(waveData, dataIndex);
-        
-        // Use oscillation magnitude for Bernoulli effect
-        const oscillationMagnitude = Math.abs(pressureGradient);
-        
-        // Calculate time-averaged oscillation magnitude
-        const avgOscillation = calculateAverageFlowRate(oscillationMagnitude, dataIndex);
-        
-        // Calculate flow rate based on hole size
-        const holeArea = Math.PI * Math.pow(holeSize, 2);
-        
-        // Return flow rate using Bernoulli principle
-        return avgOscillation * Math.sqrt(holeArea) * 2000;
-    });
-}
-
-// Convert flow rates to normalized factors for gas conservation
-function normalizeFlowFactors(flowRates) {
-    // Convert flow rates to factors (0.5 to 2.0 range)
-    const oscillationFactors = flowRates.map(rate => 
-        0.5 + Math.min(1.5, Math.abs(rate) / 50));
-    
-    // Calculate total for normalization
-    const totalOscillationFactor = oscillationFactors.reduce((sum, factor) => sum + factor, 0);
-    
-    // Return normalized factors that maintain total gas flow
-    return oscillationFactors.map(factor => 
-        (factor / totalOscillationFactor) * flames.length);
+    // Create flame history arrays for visual smoothing only
+    flameHistory = Array.from({ length: window.flameCount }, () => Array(5).fill(20));
 }
 
 // Update flame visuals based on normalized height factors
@@ -89,11 +30,11 @@ function updateFlameVisuals(normalizedFactors, baseHeight) {
         // Calculate new height with conservation of total flow
         const newHeight = baseHeight * normalizedFactors[i];
         
-        // Update flame's height history
+        // Update flame's height history (for visual smoothing only)
         flameHistory[i].shift();
         flameHistory[i].push(newHeight);
         
-        // Calculate the average height over the last frames for smoothing
+        // Calculate the average height over the last frames for visual smoothing
         const averageHeight = flameHistory[i].reduce((sum, h) => sum + h, 0) / 
                               flameHistory[i].length;
         
@@ -132,16 +73,13 @@ function updateFlameAppearance(flameElement, heightRatio) {
     flameElement.style.width = `${Math.min(20, flameWidth)}px`;
 }
 
-// Main flame animation function
-function animateFlames(waveData) {
-    // Calculate flow rates based on pressure oscillations
-    const flowRates = calculateFlameFlowRates(waveData);
+// Main flame animation function - now only handles visual updates
+function animateFlames() {
+    // Get normalized factors from physics engine
+    const normalizedFactors = window.normalizedFlameFactors || Array(flames.length).fill(1);
     
     // Calculate base height based on propane pressure
     const baseHeight = 20 + (propanePressure * 20);
-    
-    // Convert to normalized factors that conserve total gas flow
-    const normalizedFactors = normalizeFlowFactors(flowRates);
     
     // Update visual appearance of flames
     updateFlameVisuals(normalizedFactors, baseHeight);
@@ -150,6 +88,3 @@ function animateFlames(waveData) {
 // Expose the function to the global scope
 window.initializeFlames = initializeFlames;
 window.animateFlames = animateFlames;
-window.calculateAverageFlowRate = calculateAverageFlowRate;
-window.calculateFlameFlowRates = calculateFlameFlowRates;
-window.normalizeFlowFactors = normalizeFlowFactors;

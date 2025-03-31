@@ -96,7 +96,7 @@ function initializeChart() {
     });
     
     // Update the dataset label for flow rate
-    chart.data.datasets[3].label = 'Average Flow Rate (1/4 sec)';
+    chart.data.datasets[3].label = 'Flow Velocity';
 }
 
 // Update chart with new wave data
@@ -108,11 +108,12 @@ function updateChartData(waveData) {
     
     const positions = Array(pointCount).fill().map((_, i) => (i / pointCount) * tubeLength);
 
-    // Calculate instantaneous flow rate data
-    const instantFlowRateData = waveData.map((pressure, index) => {
-        // Use pressure gradient for flow rate calculation
-        return calculatePressureGradient(waveData, index);
-    });
+    // Use the current time for flow calculations - get from the global state
+    const currentTime = window.time || 0;
+    
+    // Calculate flow rate data with the new physics-based model
+    const instantFlowRateData = positions.map((position, index) => 
+        calculateFlowRate(waveData, index, currentTime));
     
     // Calculate the average flow rate using time window
     const averageFlowRateData = instantFlowRateData.map((flowRate, index) => 
@@ -125,7 +126,7 @@ function updateChartData(waveData) {
     chart.data.datasets[0].data = waveData;
     chart.data.datasets[1].data = envelopeData;
     chart.data.datasets[2].data = negativeEnvelopeData;
-    chart.data.datasets[3].data = averageFlowRateData; // Use average flow rate
+    chart.data.datasets[3].data = averageFlowRateData;
     
     // Remove any extra datasets beyond the main ones
     while (chart.data.datasets.length > 4) {

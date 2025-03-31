@@ -176,6 +176,12 @@ function updatePhysicsInfo() {
 // Function to set up the physics info display elements in the DOM
 function setupPhysicsInfoDisplay() {
     const physicsInfoDiv = document.querySelector('.physics-info');
+    
+    // Check if the display is already populated to avoid duplication
+    if (physicsInfoDiv.querySelector('.physics-params')) {
+        return; // Exit if already set up
+    }
+    
     physicsInfoDiv.innerHTML = `
         <h3>Physics Parameters</h3>
         <div class="physics-params">
@@ -218,26 +224,55 @@ function setupNavigation() {
     `;
 }
 
+// Physics timing variables
+let lastPhysicsTime = 0;
+const PHYSICS_TIMESTEP = 0.01; // Fixed physics timestep (10ms)
+let accumulatedTime = 0;
+let waveData = []; // Define waveData at a higher scope level
+
 // Main update function that drives the simulation
 function updateSimulation() {
     if (window.isPaused) {
+        requestAnimationFrame(updateSimulation);
         return;
     }
     
-    // Increment simulation time
-    time += TIME_INCREMENT;
+    // Calculate delta time since last frame
+    const currentTime = performance.now() / 1000;
+    const deltaTime = Math.min(0.1, currentTime - lastPhysicsTime);
+    lastPhysicsTime = currentTime;
     
-    // Generate wave data for the current time
-    const waveData = Array(pointCount).fill().map((_, i) => {
-        const position = (i / pointCount) * tubeLength;
-        return generateStandingWave(position, time, reflections).combinedWave;
-    });
+    // Accumulate time for fixed physics steps
+    accumulatedTime += deltaTime;
     
-    // Update the chart with new data
-    updateChart(waveData); 
-
-    // Animate the flames based on the wave data
-    animateFlames(waveData);
+    // Flag to track if physics was updated this frame
+    let physicsUpdated = false;
+    
+    // Update physics with fixed timestep
+    while (accumulatedTime >= PHYSICS_TIMESTEP) {
+        // Increment simulation time
+        time += PHYSICS_TIMESTEP;
+        window.time = time;
+        
+        // Generate wave data for the current time
+        waveData = Array(pointCount).fill().map((_, i) => {
+            const position = (i / pointCount) * tubeLength;
+            return generateStandingWave(position, time, reflections).combinedWave;
+        });
+        
+        // Update physics for flames
+        window.normalizedFlameFactors = updateFlamePhysics(waveData, window.flameCount, time);
+        
+        accumulatedTime -= PHYSICS_TIMESTEP;
+        physicsUpdated = true;
+    }
+    
+    // Update visual elements at display refresh rate
+    // Only if we have valid waveData
+    if (waveData && waveData.length > 0) {
+        updateChart(waveData);
+        animateFlames();
+    }
     
     // Schedule the next animation frame
     window.animationFrameId = requestAnimationFrame(updateSimulation);
@@ -263,8 +298,6 @@ function initializeUI() {
     }
 }
 
-// Call this when the DOM is fully loaded
-document.addEventListener('DOMContentLoaded', initializeUI);
 window.setupBasicControls = setupBasicControls;
 window.setupDampingControl = setupDampingControl;
 window.setupReflectionsControl = setupReflectionsControl;

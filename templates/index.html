@@ -63,6 +63,36 @@
             background-color: #f8f9fa;
         }
     </style>
+    <script src="https://cdn.socket.io/4.6.0/socket.io.min.js"></script>
+    <script src="/static/js/socket.js"></script>
+    <script>
+        const channelControls = []; // Declare channelControls globally
+
+        function handleChannelUpdate(data) {
+            const channelIndex = data.channel;
+            const controls = channelControls[channelIndex];
+
+            if (!controls) return;
+
+            if (data.frequency !== undefined) {
+                controls.frequencySlider.value = data.frequency;
+                controls.frequencyValue.textContent = `${data.frequency.toFixed(1)} Hz`;
+            }
+
+            if (data.volume !== undefined) {
+                controls.volumeSlider.value = data.volume;
+                controls.volumeValue.textContent = `${Math.round(data.volume * 100)}%`;
+            }
+
+            if (data.mute !== undefined) {
+                controls.muteCheckbox.checked = data.mute;
+            }
+        }
+
+        function handleGlobalUpdate() {
+            socket.emit('request_all_channels'); // Request fresh state for all channels
+        }
+    </script>
 </head>
 <body>
     <h1>HeatWave Control</h1>
@@ -83,10 +113,7 @@
         <!-- Channels will be generated here -->
     </div>
 
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
     <script>
-        const socket = io();
-        const channelControls = [];
         
         // Create UI for all 8 channels
         function createChannelUIs() {
@@ -203,30 +230,12 @@
         
         // Handle updates from the server
         socket.on('update_channel', (data) => {
-            const channelIndex = data.channel;
-            const controls = channelControls[channelIndex];
-            
-            if (!controls) return;
-            
-            if (data.frequency !== undefined) {
-                controls.frequencySlider.value = data.frequency;
-                controls.frequencyValue.textContent = `${data.frequency.toFixed(1)} Hz`;
-            }
-            
-            if (data.volume !== undefined) {
-                controls.volumeSlider.value = data.volume;
-                controls.volumeValue.textContent = `${Math.round(data.volume * 100)}%`;
-            }
-            
-            if (data.mute !== undefined) {
-                controls.muteCheckbox.checked = data.mute;
-            }
+            handleChannelUpdate(data);
         });
         
         // Handle global updates (e.g., after using pause to mute all)
         socket.on('update_all_channels', () => {
-            // Request fresh state for all channels
-            socket.emit('request_all_channels');
+            handleGlobalUpdate();
         });
         
         // Initialize UI

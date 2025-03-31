@@ -63,8 +63,8 @@ function initializeChart() {
                     },
                     ticks: {
                         callback: function(value, index) {
-                            // Show only some tick marks
-                            if (index % 50 === 0) {
+                            // Changed from index % 50 to avoid 50Hz artifacts
+                            if (index % 47 === 0) { // Use prime number for tick spacing
                                 return (index / pointCount * tubeLength).toFixed(1);
                             }
                             return null;
@@ -108,23 +108,13 @@ function updateChartData(waveData) {
     
     const positions = Array(pointCount).fill().map((_, i) => (i / pointCount) * tubeLength);
 
-    // Use the current time for calculations
-    const currentTime = window.time || 0;
-    
-    // Calculate the pressure distribution using the T-network model
-    const pressureDistribution = calculatePressureDistribution(positions, currentTime);
-    
-    // Normalize the pressure distribution for display
-    let normalizedPressureDistribution = [...pressureDistribution];
-    const maxPressure = Math.max(...pressureDistribution.map(Math.abs));
-    if (maxPressure > 0) {
-        normalizedPressureDistribution = pressureDistribution.map(p => p / maxPressure);
-    }
+    // Use the pre-calculated normalized pressure distribution from physics loop
+    const normalizedPressureDistribution = window.normalizedPressureDistribution || Array(pointCount).fill(0);
 
     // Get the flame height factors
     const normalizedFactors = window.normalizedFlameFactors || Array(window.flameCount).fill(1);
     
-    // Resample for chart display - convert from flame positions to chart positions
+    // Resample for chart display
     const resampledFactors = Array(pointCount).fill(0);
     for (let i = 0; i < pointCount; i++) {
         const position = (i / pointCount) * tubeLength;
@@ -138,13 +128,13 @@ function updateChartData(waveData) {
     const envelopeData = positions.map(pos => generateEnvelope(pos));
     const negativeEnvelopeData = envelopeData.map(val => -val);
 
-    // Update main datasets
+    // Update datasets
     chart.data.datasets[0].data = waveData;
     chart.data.datasets[1].data = envelopeData;
     chart.data.datasets[2].data = negativeEnvelopeData;
     chart.data.datasets[3].data = normalizedPressureDistribution;
     
-    // Add or update the flame factors dataset
+    // Update the flame factors dataset
     if (chart.data.datasets.length <= 4) {
         chart.data.datasets.push({
             label: 'Flame Height Factors',
@@ -158,10 +148,6 @@ function updateChartData(waveData) {
     } else {
         chart.data.datasets[4].data = resampledFactors;
     }
-
-    // Update the dataset labels
-    chart.data.datasets[3].label = 'Pressure Distribution';
-    chart.options.scales.flowrate.title.text = 'Pressure & Flame Factors';
     
     chart.update();
 }

@@ -8,6 +8,7 @@ window.channelData = {};
 window.isPaused = false;
 window.animationFrameId = null;
 window.time = 0;
+window.reflections = 5; // Default number of reflections
 
 // Initialize everything when DOM is loaded - moved to end of file
 document.addEventListener('DOMContentLoaded', function() {

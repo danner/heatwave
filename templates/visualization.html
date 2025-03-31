@@ -8,6 +8,8 @@
     
     <!-- External libraries first -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-chart-matrix@1.2.0/dist/chartjs-chart-matrix.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-colorschemes"></script>
     <script src="https://cdn.socket.io/4.6.0/socket.io.min.js"></script>
     
     <!-- Main coordination module that sets global config -->
@@ -19,6 +21,7 @@
     <script src="/static/js/chart-manager.js" defer></script>
     <script src="/static/js/flame-visualizer.js" defer></script>
     <script src="/static/js/ui-controller.js" defer></script>
+    <script src="/static/js/frequency-response.js" defer></script>
 </head>
 <body>
     <div class="container">
@@ -29,6 +32,11 @@
         
         <div class="chart-container">
             <canvas id="waveChart"></canvas>
+        </div>
+
+        <div class="frequency-response-container">
+            <h3>Frequency Response Map</h3>
+            <canvas id="frequencyResponseChart"></canvas>
         </div>
         
         <div class="controls">

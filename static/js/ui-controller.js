@@ -19,11 +19,13 @@ function setupBasicControls() {
     document.getElementById('speedOfSound').addEventListener('input', function(e) {
         speedOfSound = parseFloat(e.target.value);
         updatePhysicsInfo();
+        window.updateFrequencyResponse();
     });
     
     document.getElementById('tubeLength').addEventListener('input', function(e) {
         tubeLength = parseFloat(e.target.value);
         updatePhysicsInfo();
+        window.updateFrequencyResponse();
     });
     
     document.getElementById('toggleAnimationBtn').addEventListener('click', function() {
@@ -64,6 +66,7 @@ function setupDampingControl() {
         if (!window.isPaused && !window.animationFrameId) {
             updateSimulation();
         }
+        window.updateFrequencyResponse();
     });
 }
 
@@ -79,8 +82,14 @@ function setupReflectionsControl() {
     controlsDiv.appendChild(reflectionsControl);
 
     document.getElementById('reflectionsInput').addEventListener('input', function(e) {
-        reflections = parseInt(e.target.value, 10);
-        // Force immediate chart update to show new reflections
+        window.reflections = parseInt(e.target.value, 10);
+        
+        // Force frequency response update when reflections change
+        if (window.updateFrequencyResponse) {
+            window.updateFrequencyResponse();
+        }
+        
+        // Force immediate chart update
         if (!window.isPaused) {
             if (window.animationFrameId) {
                 cancelAnimationFrame(window.animationFrameId);
@@ -107,6 +116,7 @@ function setupTubeDiameterControl() {
         tubeDiameter = parseFloat(e.target.value) / 100; // Convert cm to meters
         document.getElementById('tubeDiameterValue').textContent = e.target.value;
         updatePhysicsInfo();
+        window.updateFrequencyResponse();
     });
 }
 
@@ -126,6 +136,7 @@ function setupHoleSizeControl() {
         holeSize = parseFloat(e.target.value) / 1000; // Convert mm to meters
         document.getElementById('holeSizeValue').textContent = e.target.value;
         updatePhysicsInfo();
+        window.updateFrequencyResponse();
     });
 }
 
@@ -226,9 +237,13 @@ function setupNavigation() {
 
 // Physics timing variables
 let lastPhysicsTime = 0;
-const PHYSICS_TIMESTEP = 0.01; // Fixed physics timestep (10ms)
+const PHYSICS_TIMESTEP = 0.007; // Changed from 0.01 to 0.007 (approx 143Hz)
 let accumulatedTime = 0;
-let waveData = []; // Define waveData at a higher scope level
+let waveData = []; 
+
+// Add frequency monitoring
+let physicsStepsThisSecond = 0;
+let lastSecond = Math.floor(performance.now() / 1000);
 
 // Main update function that drives the simulation
 function updateSimulation() {
@@ -260,21 +275,37 @@ function updateSimulation() {
             return generateStandingWave(position, time, reflections).combinedWave;
         });
         
-        // Update physics for flames
+        // Calculate pressure distribution here in the physics loop
+        const positions = Array(pointCount).fill().map((_, i) => (i / pointCount) * tubeLength);
+        const pressureDistribution = calculatePressureDistribution(positions, time);
+        
+        // Store normalized pressure distribution for visualization
+        const maxPressure = Math.max(...pressureDistribution.map(Math.abs));
+        window.normalizedPressureDistribution = maxPressure > 0 
+            ? pressureDistribution.map(p => p / maxPressure)
+            : [...pressureDistribution];
+        
         window.normalizedFlameFactors = updateFlamePhysics(waveData, window.flameCount, time);
         
         accumulatedTime -= PHYSICS_TIMESTEP;
         physicsUpdated = true;
+
+        // Add frequency monitoring
+        physicsStepsThisSecond++;
+        const currentSecond = Math.floor(performance.now() / 1000);
+        if (currentSecond > lastSecond) {
+            console.log(`Physics updates per second: ${physicsStepsThisSecond}`);
+            physicsStepsThisSecond = 0;
+            lastSecond = currentSecond;
+        }
     }
     
     // Update visual elements at display refresh rate
-    // Only if we have valid waveData
     if (waveData && waveData.length > 0) {
         updateChart(waveData);
         animateFlames();
     }
     
-    // Schedule the next animation frame
     window.animationFrameId = requestAnimationFrame(updateSimulation);
 }
 
@@ -296,6 +327,12 @@ function initializeUI() {
     if (!window.isPaused) {
         updateSimulation();
     }
+    
+    // Initialize frequency response chart
+    window.initializeFrequencyResponse();
+    
+    // Generate initial frequency response data
+    window.updateFrequencyResponse();
 }
 
 window.setupBasicControls = setupBasicControls;

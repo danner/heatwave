@@ -9,7 +9,6 @@ let propanePressure = 1.1; // Normalized pressure
 let baseFrequency = 110; // not used unless server channels are missing
 let dampingCoefficient = 0.05; // Damping coefficient per meter
 const externalPressure = 1.0; // Normalized external pressure
-let reflections = 5; // Default number of reflections
 
 // Constants for T-network model
 const SPECIFIC_HEAT_RATIO = 1.4;  // γ (gamma) for propane
@@ -37,7 +36,7 @@ function calculateFundamental() {
 }
 
 // Generate standing wave for a closed-end tube with damping
-function generateStandingWave(position, time, reflectionCount = reflections) {
+function generateStandingWave(position, time, reflectionCount = window.reflections) {
     // Combined wave (sum of all reflections and channels)
     let combinedWave = 0;
     
@@ -301,7 +300,7 @@ function calculateAveragePressure(position, currentPressure, currentTime) {
     return totalWeight > 0 ? weightedSum / totalWeight : 0;
 }
 
-// T-network model for Rubens' flame tube
+// T-network model for Rubens' flame tube with multiple reflections
 function calculateTNetworkPressures(frequency, positions) {
     // Convert angular frequency
     const omega = 2 * Math.PI * frequency;
@@ -315,32 +314,59 @@ function calculateTNetworkPressures(frequency, positions) {
     // Array to store calculated pressures at each position
     const pressures = new Array(positions.length);
     
-    // Calculate for each position
+    // Both ends are closed (reflection coefficient = +1)
+    const leftEndReflection = 1.0;   // Closed end at x=0
+    const rightEndReflection = 1.0;  // Closed end at x=L
+    
+    // Initialize pressures to zero
+    for (let i = 0; i < positions.length; i++) {
+        pressures[i] = 0;
+    }
+    
+    // Calculate for each position considering multiple reflections
     for (let i = 0; i < positions.length; i++) {
         const x = positions[i];
         
-        // Transmission line impedance (tube segment)
-        // Z = Z₀ * (1 / sin(k*L)) - using actual hole spacing
-        const segmentImpedance = Z0 / Math.sin(k * HOLE_SPACING);
+        // Incident wave traveling right (initial wave)
+        const incidentWave = Math.cos(k * x);
         
-        // Shunt impedance (hole) - now includes the damping coefficient as a multiplier
-        // Z_hole = Z₀ * (k * r * (1 + HOLE_IMPEDANCE_FACTOR)) * dampingFactor
-        const dampingFactor = 1 + dampingCoefficient * 2; // Converts user damping into impedance scaling
-        const holeImpedance = Z0 * k * (holeSize / 2) * (1 + HOLE_IMPEDANCE_FACTOR) * dampingFactor;
+        // Add initial incident wave with position-based damping
+        const dampingFactor = Math.exp(-dampingCoefficient * x);
+        pressures[i] += incidentWave * dampingFactor;
         
-        // Calculate pressure at position using impedance model
-        // P(x) = P₀ * cos(k*x) + j * (Z₀/Z_hole) * sin(k*x)
-        const incidentPressure = Math.cos(k * x);
+        // Add reflections based on the number specified in the reflections parameter
+        for (let r = 1; r <= window.reflections; r++) {
+            let reflectedPhase = 1;
+            let reflectionPath = 0;
+            let reflectionDamping = 1;
+            
+            if (r % 2 === 1) {
+                // Odd reflections (right end first)
+                reflectedPhase = rightEndReflection;
+                reflectionPath = 2 * tubeLength - x; // Distance to right end and back to x
+                reflectionDamping = Math.exp(-dampingCoefficient * reflectionPath);
+            } else {
+                // Even reflections (left end after right end)
+                reflectedPhase = rightEndReflection * leftEndReflection; // Both reflection coefficients
+                reflectionPath = 2 * tubeLength + x; // Distance to right end, then left end, then to x
+                reflectionDamping = Math.exp(-dampingCoefficient * reflectionPath);
+            }
+            
+            // Add this reflection to the total pressure
+            const reflectedWave = reflectedPhase * Math.cos(k * reflectionPath);
+            pressures[i] += reflectedWave * reflectionDamping;
+        }
         
-        // Apply tube losses related to distance based on damping coefficient
-        const positionDamping = Math.exp(-dampingCoefficient * x);
-        const reflectedPressure = (Z0 / holeImpedance) * Math.sin(k * x);
+        // Apply hole effects from T-network model
+        if (holeSize > 0) {
+            // Calculate impedance effects from the holes
+            const holeImpedance = Z0 * k * (holeSize / 2) * (1 + HOLE_IMPEDANCE_FACTOR) * (1 + dampingCoefficient * 2);
+            const impedanceEffect = (Z0 / holeImpedance) * 0.3; // Scale factor for hole effect
+            pressures[i] *= (1 + impedanceEffect * Math.sin(k * x));
+        }
         
-        // Total pressure magnitude at this position, with position-based damping applied once
-        pressures[i] = Math.sqrt(
-            (incidentPressure * incidentPressure) + 
-            (reflectedPressure * reflectedPressure)
-        ) * positionDamping;
+        // Take absolute value for magnitude (this makes resonant patterns more visible)
+        pressures[i] = Math.abs(pressures[i]);
     }
     
     return pressures;

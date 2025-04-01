@@ -12,6 +12,7 @@ function initializeControls() {
     setupTubeDiameterControl();
     setupHoleSizeControl();
     setupPressureControl();
+    setupQFactorControl();
 }
 
 // Set up basic controls (speed of sound, tube length, animation toggle)
@@ -77,7 +78,7 @@ function setupReflectionsControl() {
     reflectionsControl.className = 'control-group';
     reflectionsControl.innerHTML = `
         <span class="control-label">Reflections</span>
-        <input type="number" id="reflectionsInput" value="${reflections}" min="1" max="20" step="1">
+        <input type="number" id="reflectionsInput" value="${window.reflections}" min="1" max="20" step="1">
     `;
     controlsDiv.appendChild(reflectionsControl);
 
@@ -159,29 +160,86 @@ function setupPressureControl() {
     });
 }
 
+// Add to UI initialization
+function setupQFactorControl() {
+    const controlDiv = document.createElement('div');
+    controlDiv.className = 'control-group';
+    
+    const label = document.createElement('span');
+    label.className = 'control-label';
+    label.textContent = 'Resonance Quality (Q)';
+    
+    const input = document.createElement('input');
+    input.type = 'range';
+    input.id = 'qFactor';
+    input.min = '1';
+    input.max = '15';
+    input.value = '5';
+    input.step = '0.5';
+    
+    const valueDisplay = document.createElement('span');
+    valueDisplay.textContent = input.value;
+    valueDisplay.style.marginLeft = '8px';
+    
+    controlDiv.appendChild(label);
+    controlDiv.appendChild(input);
+    controlDiv.appendChild(valueDisplay);
+    
+    document.querySelector('.controls').appendChild(controlDiv);
+    
+    // Initialize global variable
+    window.Q_FACTOR = parseFloat(input.value);
+    
+    // Event listener
+    input.addEventListener('input', function() {
+        window.Q_FACTOR = parseFloat(this.value);
+        valueDisplay.textContent = this.value;
+        
+        // Update frequency response chart
+        if (window.updateFrequencyResponse) {
+            window.updateFrequencyResponse();
+        }
+    });
+}
+
 // Function to update the physics information display
 function updatePhysicsInfo() {
     const fundamental = calculateFundamental();
-    document.getElementById('fundamentalFreq').textContent = fundamental.toFixed(1);
+    
+    // Add null checks for all elements
+    const fundamentalElem = document.getElementById('fundamentalFreq');
+    if (fundamentalElem) fundamentalElem.textContent = fundamental.toFixed(1);
     
     // Calculate wavelength for current frequency
     const wavelength = speedOfSound / baseFrequency;
-    document.getElementById('wavelength').textContent = wavelength.toFixed(1);
+    const wavelengthElem = document.getElementById('wavelength');
+    if (wavelengthElem) wavelengthElem.textContent = wavelength.toFixed(1);
     
     // Calculate resonances (odd harmonics only)
     const resonances = [1, 3, 5, 7, 9, 11, 13].map(n => (n * fundamental).toFixed(1)).join(', ') + '...';
-    document.getElementById('resonances').textContent = resonances;
+    const resonancesElem = document.getElementById('resonances');
+    if (resonancesElem) resonancesElem.textContent = resonances;
     
     // Add effective length calculation
     const radius = tubeDiameter / 2;
     const endCorrection = 0.6 * radius;
     const effectiveLength = tubeLength + endCorrection;
-    document.getElementById('effectiveLength').textContent = effectiveLength.toFixed(1);
-    document.getElementById('tubeDiameter').textContent = (tubeDiameter * 100).toFixed(1);
-    document.getElementById('holeSize').textContent = (holeSize * 1000).toFixed(1);
-    document.getElementById('propanePressure').textContent = propanePressure.toFixed(1);
-    document.getElementById('reflections').textContent = reflections;
-    document.getElementById('damping').textContent = dampingCoefficient.toFixed(2);
+    
+    // Add null checks for all remaining elements
+    const elements = {
+        'effectiveLength': effectiveLength.toFixed(1),
+        'tubeDiameter': (tubeDiameter * 100).toFixed(1),
+        'holeSize': (holeSize * 1000).toFixed(1),
+        'propanePressure': propanePressure.toFixed(1),
+        'reflections': window.reflections,
+        'damping': dampingCoefficient.toFixed(2)
+    };
+    
+    // Set text content only if element exists
+    Object.entries(elements).forEach(([id, value]) => {
+        const elem = document.getElementById(id);
+        if (elem) elem.textContent = value;
+    });
 }
 
 // Function to set up the physics info display elements in the DOM

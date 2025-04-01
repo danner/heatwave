@@ -6,22 +6,27 @@
     <title>Rubens' Tube Simulation</title>
     <link rel="stylesheet" href="/static/css/visualization.css">
     
-    <!-- External libraries first -->
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chartjs-chart-matrix@1.2.0/dist/chartjs-chart-matrix.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-colorschemes"></script>
+    <!-- Chart.js and plugins - load in proper order -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-chart-matrix@2"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-colorschemes@0.4.0"></script>
     <script src="https://cdn.socket.io/4.6.0/socket.io.min.js"></script>
+
+    <!-- Application scripts -->
+    <script src="/static/js/visualization.js"></script>
+    <script src="/static/js/physics-engine.js"></script>
+    <script src="/static/js/channel-manager.js"></script>
+    <script src="/static/js/chart-manager.js"></script>
+    <script src="/static/js/flame-visualizer.js"></script>
+    <script src="/static/js/ui-controller.js"></script>
+    <script src="/static/js/frequency-response.js"></script>
     
-    <!-- Main coordination module that sets global config -->
-    <script src="/static/js/visualization.js" defer></script>
-    
-    <!-- Then load modules - these can be parallel since they only define functions -->
-    <script src="/static/js/physics-engine.js" defer></script>
-    <script src="/static/js/channel-manager.js" defer></script>
-    <script src="/static/js/chart-manager.js" defer></script>
-    <script src="/static/js/flame-visualizer.js" defer></script>
-    <script src="/static/js/ui-controller.js" defer></script>
-    <script src="/static/js/frequency-response.js" defer></script>
+    <script>
+        // Simple initialization check when DOM is ready
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log("DOM loaded - all scripts should be available");
+        });
+    </script>
 </head>
 <body>
     <div class="container">
@@ -36,6 +41,16 @@
 
         <div class="frequency-response-container">
             <h3>Frequency Response Map</h3>
+            <div class="magnitude-key">
+                <span>Pressure:</span>
+                <div>
+                    <div class="magnitude-gradient"></div>
+                    <div class="magnitude-labels">
+                        <span>Low</span>
+                        <span>High</span>
+                    </div>
+                </div>
+            </div>
             <canvas id="frequencyResponseChart"></canvas>
         </div>
         

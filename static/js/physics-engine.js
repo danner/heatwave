@@ -323,6 +323,13 @@ function calculateTNetworkPressures(frequency, positions) {
         pressures[i] = 0;
     }
     
+    // Get Q factor - higher values create sharper resonances
+    const Q_FACTOR = window.Q_FACTOR || 5.0;
+    
+    // Calculate Q-weighted damping coefficient - lower damping = sharper resonances
+    // But we apply this uniformly, not targeting specific frequencies
+    const effectiveDamping = dampingCoefficient / Q_FACTOR;
+    
     // Calculate for each position considering multiple reflections
     for (let i = 0; i < positions.length; i++) {
         const x = positions[i];
@@ -331,41 +338,59 @@ function calculateTNetworkPressures(frequency, positions) {
         const incidentWave = Math.cos(k * x);
         
         // Add initial incident wave with position-based damping
-        const dampingFactor = Math.exp(-dampingCoefficient * x);
+        const dampingFactor = Math.exp(-effectiveDamping * x);
         pressures[i] += incidentWave * dampingFactor;
         
-        // Add reflections based on the number specified in the reflections parameter
-        for (let r = 1; r <= window.reflections; r++) {
+        // First reflection - more strongly weighted to enhance standing wave formation
+        if (window.reflections >= 1) {
+            const firstReflectionPath = 2 * tubeLength - x;
+            const firstReflectionDamping = Math.exp(-effectiveDamping * firstReflectionPath);
+            const firstReflectedWave = rightEndReflection * Math.cos(k * firstReflectionPath);
+            pressures[i] += firstReflectedWave * firstReflectionDamping;
+        }
+        
+        // Add remaining reflections with uniform physical properties
+        for (let r = 2; r <= window.reflections; r++) {
             let reflectedPhase = 1;
             let reflectionPath = 0;
-            let reflectionDamping = 1;
             
             if (r % 2 === 1) {
                 // Odd reflections (right end first)
                 reflectedPhase = rightEndReflection;
-                reflectionPath = 2 * tubeLength - x; // Distance to right end and back to x
-                reflectionDamping = Math.exp(-dampingCoefficient * reflectionPath);
+                reflectionPath = r * tubeLength - x;
             } else {
                 // Even reflections (left end after right end)
-                reflectedPhase = rightEndReflection * leftEndReflection; // Both reflection coefficients
-                reflectionPath = 2 * tubeLength + x; // Distance to right end, then left end, then to x
-                reflectionDamping = Math.exp(-dampingCoefficient * reflectionPath);
+                reflectedPhase = rightEndReflection * leftEndReflection;
+                reflectionPath = r * tubeLength + x;
             }
+            
+            // Apply damping based on path length
+            const reflectionDamping = Math.exp(-effectiveDamping * reflectionPath);
             
             // Add this reflection to the total pressure
             const reflectedWave = reflectedPhase * Math.cos(k * reflectionPath);
             pressures[i] += reflectedWave * reflectionDamping;
         }
         
+        // Apply standing wave interference effects - this naturally enhances resonant frequencies
+        // without targeting specific ones
+        if (window.reflections > 2) {
+            // Standing wave factor naturally enhances resonances without targeting frequencies
+            // This is based on the interference pattern which is strongest at resonance
+            const standingWaveFactor = 1.0 + 
+                0.3 * Math.abs(Math.sin(k * tubeLength)) * (window.reflections / 5);
+            pressures[i] *= standingWaveFactor;
+        }
+        
         // Apply hole effects from T-network model
         if (holeSize > 0) {
             // Calculate impedance effects from the holes
-            const holeImpedance = Z0 * k * (holeSize / 2) * (1 + HOLE_IMPEDANCE_FACTOR) * (1 + dampingCoefficient * 2);
-            const impedanceEffect = (Z0 / holeImpedance) * 0.3; // Scale factor for hole effect
+            const holeImpedance = Z0 * k * (holeSize / 2) * (1 + HOLE_IMPEDANCE_FACTOR);
+            const impedanceEffect = (Z0 / holeImpedance) * 0.3;
             pressures[i] *= (1 + impedanceEffect * Math.sin(k * x));
         }
         
-        // Take absolute value for magnitude (this makes resonant patterns more visible)
+        // Take absolute value for magnitude
         pressures[i] = Math.abs(pressures[i]);
     }
     

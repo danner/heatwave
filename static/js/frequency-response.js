@@ -3,7 +3,7 @@
 let frequencyResponseChart;
 const MIN_FREQ = 20;  // Hz
 const MAX_FREQ = 500; // Hz
-const FREQ_STEPS = 300;
+const FREQ_STEPS = 350; // Higher resolution
 const POSITION_STEPS = 200;
 
 // Audio visualization constants
@@ -179,12 +179,21 @@ function calculateFrequencyResponse() {
 
 // Add this to ensure the frequency response chart updates with reflections changes
 function updateFrequencyResponse() {
-    console.log(`Updating frequency response chart with ${window.reflections} reflections...`);
+    console.log(`Updating frequency response chart with reflections=${window.reflections}, Q=${window.Q_FACTOR}...`);
     const responseData = calculateFrequencyResponse();
     
     frequencyResponseChart.data.datasets[0].data = responseData;
     frequencyResponseChart.options.scales.y.max = tubeLength;
     frequencyResponseChart.update();
+    
+    // Update magnitude key labels with current min/max values
+    const lowLabel = document.querySelector('.magnitude-labels span:first-child');
+    const highLabel = document.querySelector('.magnitude-labels span:last-child');
+    
+    if (lowLabel && highLabel) {
+        lowLabel.textContent = `${minMagnitude.toFixed(0)} dB`;
+        highLabel.textContent = `${maxMagnitude.toFixed(0)} dB`;
+    }
     
     console.log(`Generated ${responseData.length} data points for frequency response`);
 }

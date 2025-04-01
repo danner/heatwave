@@ -73,36 +73,82 @@ function updateFlameAppearance(flameElement, heightRatio) {
     flameElement.style.width = `${Math.min(20, flameWidth)}px`;
 }
 
-// Main flame animation function - now directly uses pressure values
+// Main flame animation function - with conservation of gas flow
 function animateFlames() {
     // Get pressure values from physics engine
     const pressureValues = window.normalizedFlameFactors || Array(flames.length).fill(1);
     
-    // Base height constant - this will be multiplied by pressure
-    const baseHeight = 20;
+    // Base height constant
+    const baseHeight = 50;
     
-    // Scale factor to make flames visible (since pressure values are typically small)
-    const pressureScaleFactor = 50 * propanePressure;
+    // Scale factor based on propane pressure
+    const pressureScaleFactor = 10 * propanePressure;
     
-    // Update visual appearance of flames
+    // Calculate raw flame heights by applying pressure effect and adding base height
+    const rawFlameHeights = pressureValues.map(p => baseHeight + (p * pressureScaleFactor));
+    
+    // Calculate average flame height
+    const avgFlameHeight = rawFlameHeights.reduce((sum, h) => sum + h, 0) / rawFlameHeights.length;
+    
+    // Center the flame heights around baseHeight
+    const centeredFlameHeights = rawFlameHeights.map(h => h + (baseHeight - avgFlameHeight));
+    
+    // Calculate what the total gas flow should be (based on propane pressure)
+    const expectedTotalGasFlow = baseHeight * flames.length * propanePressure;
+    
+    // Calculate actual gas flow (only counting positive flows)
+    const actualTotalGasFlow = centeredFlameHeights
+        .filter(h => h > 0)
+        .reduce((sum, h) => sum + h, 0);
+    
+    // Normalize positive heights to maintain total gas flow
+    let normalizedHeights;
+    if (actualTotalGasFlow <= 0) {
+        // Edge case: if no positive flows, distribute evenly
+        normalizedHeights = Array(flames.length).fill(expectedTotalGasFlow / flames.length);
+    } else {
+        // Normal case: adjust positive flows to maintain total gas while keeping negatives
+        const positiveFactor = expectedTotalGasFlow / actualTotalGasFlow;
+        normalizedHeights = centeredFlameHeights.map(h => h > 0 ? h * positiveFactor : h);
+    }
+    
+    console.log("Average flame height:", avgFlameHeight);
+    console.log("Base height:", baseHeight);
+    console.log("Normalized heights:", normalizedHeights);
+    console.log("Actual total gas flow:", actualTotalGasFlow);
+    console.log("Expected total gas flow:", expectedTotalGasFlow);
+    
+    // Update each flame
     for (let i = 0; i < flames.length; i++) {
-        // Calculate new height based directly on pressure values
-        const newHeight = baseHeight + pressureValues[i] * pressureScaleFactor;
-        
         // Update flame's height history (for visual smoothing only)
         flameHistory[i].shift();
-        flameHistory[i].push(newHeight);
+        flameHistory[i].push(normalizedHeights[i]);
         
         // Calculate the average height over the last frames for visual smoothing
         const averageHeight = flameHistory[i].reduce((sum, h) => sum + h, 0) / 
                               flameHistory[i].length;
         
-        // Apply height to flame
-        flames[i].style.height = `${Math.max(5, averageHeight)}px`;
+        // Apply height to flame (negative heights are displayed as 0)
+        flames[i].style.height = `${Math.max(0, averageHeight)}px`;
         
-        // Calculate intensity based on relative height
-        const heightRatio = averageHeight / baseHeight;
-        updateFlameAppearance(flames[i], heightRatio);
+        // Handle flame visibility based on height
+        if (averageHeight <= 0) {
+            // Flame is extinguished
+            flames[i].style.opacity = '0';
+        } else if (averageHeight < 5) {
+            // Flame is dying - fade out gradually
+            flames[i].style.opacity = (averageHeight / 5).toString();
+        } else {
+            // Normal flame
+            flames[i].style.opacity = '1';
+        }
+        
+        // Only apply appearance updates to visible flames
+        if (averageHeight > 0) {
+            // Calculate intensity based on relative height
+            const heightRatio = averageHeight / baseHeight;
+            updateFlameAppearance(flames[i], heightRatio);
+        }
     }
 }
 

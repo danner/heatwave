@@ -3,6 +3,7 @@ import time
 import pygame
 import signal
 import sys
+import eventlet  # Make sure this is at the top of the file
 from midi import midi_in, midi_out, handle_midi_message
 from audio import update_volumes, update_pitches
 from state import channels, set_lights_to_current_state, channel_log, load_channel_log, set_current_log_index
@@ -43,7 +44,7 @@ def signal_handler(sig, frame):
         midi_out.close()
     
     # Exit after a short delay to allow threads to finish
-    time.sleep(0.5)
+    eventlet.sleep(0.5)  # Non-blocking sleep
     sys.exit(0)
 
 # Register signal handlers

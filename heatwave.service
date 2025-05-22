@@ -1,13 +1,14 @@
 [Unit]
-Description=Heatwave Audio Application
-After=network.target
+Description=Heatwave MIDI+Flask App
+After=network.target bluetooth.service
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
-User=pi
-WorkingDirectory=/home/pi/heatwave
-ExecStart=/usr/bin/python3 /home/pi/heatwave/main.py
-Restart=on-failure
+User=heatwave
+WorkingDirectory=/home/heatwave/heatwave-app
+ExecStart=/home/heatwave/heatwave-venv/bin/python main.py
+Restart=always
 RestartSec=5
 StandardOutput=syslog
 StandardError=syslog

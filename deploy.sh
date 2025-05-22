@@ -25,6 +25,12 @@ echo "Deploying Heatwave application..."
 # Get the current directory
 CURRENT_DIR=$(pwd)
 
+# Check if we need to download libraries (if static/libs directory is empty)
+if [ ! -d "static/libs" ] || [ -z "$(ls -A static/libs 2>/dev/null)" ]; then
+    echo "Local libraries not found. Downloading required libraries..."
+    bash download_libs.sh
+fi
+
 # 1. Ensure the application directory exists
 echo "Checking application directory..."
 mkdir -p "$APP_DIR"

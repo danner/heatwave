@@ -1,0 +1,17 @@
+[Unit]
+Description=Heatwave Audio Application
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/heatwave
+ExecStart=/usr/bin/python3 /home/pi/heatwave/main.py
+Restart=on-failure
+RestartSec=5
+StandardOutput=syslog
+StandardError=syslog
+SyslogIdentifier=heatwave
+
+[Install]
+WantedBy=multi-user.target

@@ -1,3 +1,7 @@
+# Apply eventlet monkey patching first
+import eventlet
+eventlet.monkey_patch()
+
 from flask import Flask, render_template, jsonify
 from flask_socketio import SocketIO, emit
 import threading
@@ -10,7 +14,7 @@ from state import (
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'heatwave-secret!'
-socketio = SocketIO(app, cors_allowed_origins="*")
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 
 # Reference to channels will be set from main.py
 channels_ref = None
@@ -95,13 +99,9 @@ def start_web_server(channels):
     # Register the broadcast function as a callback for state changes
     register_update_callback(broadcast_channel_update)
     
-    # Start Flask-SocketIO in a separate thread
-    def run_server():
-        socketio.run(app, host='0.0.0.0', port=6134, debug=False)
-    
-    thread = threading.Thread(target=run_server)
-    thread.daemon = True
-    thread.start()
+    # Start Flask-SocketIO with eventlet in the main thread
+    print("Starting web server with eventlet at http://0.0.0.0:6134")
+    socketio.run(app, host='0.0.0.0', port=6134, debug=False)
 
 # Function to broadcast channel updates to all web clients
 def broadcast_channel_update(channel_number):

@@ -1,7 +1,6 @@
 import mido
-import eventlet  # Add this import
-import threading
-import time
+import gevent  # Change from threading and time to gevent
+import time  # Keep for non-critical operations
 from mido import MidiFile, Message, open_input, open_output
 from state import channels
 from midi_actions import note_to_action, adjust_frequency, adjust_volume, handle_button, handle_global_button
@@ -90,7 +89,7 @@ def midi_device_monitor():
     while True:
         if not midi_connected:
             connect_midi_devices()
-        eventlet.sleep(5)
+        gevent.sleep(5)  # Use gevent.sleep instead of time.sleep
 
 def handle_midi_message(message, midi_out):
     # Skip processing if we're using dummy devices
@@ -123,8 +122,8 @@ def handle_midi_message(message, midi_out):
     else:
         print(f"Unhandled MIDI message: {message}")
 
-# Start the MIDI device monitor thread - use eventlet instead
-midi_monitor_greenthread = eventlet.spawn(midi_device_monitor)
+# Start the MIDI device monitor as a greenlet instead of thread
+midi_monitor_greenlet = gevent.spawn(midi_device_monitor)
 
 # Try to connect to MIDI devices at startup
 print("Looking for MIDI devices...")

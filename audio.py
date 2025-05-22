@@ -1,5 +1,6 @@
 import numpy as np
 import pygame
+import gevent
 
 # Initialize pygame mixer
 pygame.mixer.init(frequency=44100, size=-16, channels=1, buffer=4096)
@@ -54,7 +55,10 @@ def update_pitches(channels):
             wave = generate_sine_wave(freq, AMPLITUDE, RATE)
             # Fade out current sound before stopping it
             sounds[i].fadeout(50)  # Short 50ms fadeout
-            pygame.time.wait(50)   # Wait for fadeout to complete
+            
+            # Use gevent.sleep instead of pygame.time.wait
+            gevent.sleep(0.05)  # Wait for fadeout to complete
+            
             sounds[i].stop()
             sounds[i] = pygame.sndarray.make_sound((wave * 32767).astype(np.int16))
             sounds[i].set_volume(volumes[i])  # Respect the previously set volume

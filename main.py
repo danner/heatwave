@@ -1,10 +1,12 @@
-# Apply eventlet monkey patching first - must be before any other imports
-import eventlet
-eventlet.monkey_patch()
+# Use gevent instead of eventlet for monkey patching
+from gevent import monkey
+monkey.patch_all()
 
+import threading
 import pygame
 import signal
 import sys
+import gevent
 from midi import midi_in, midi_out, handle_midi_message
 from audio import update_volumes, update_pitches
 from state import channels, set_lights_to_current_state, channel_log, load_channel_log, set_current_log_index
@@ -18,7 +20,7 @@ def audio_thread():
     while running:
         update_volumes(channels)
         update_pitches(channels)
-        eventlet.sleep(0.01)
+        gevent.sleep(0.01)  # Use gevent.sleep instead of time.sleep
 
 # MIDI processing thread
 def midi_thread():
@@ -27,7 +29,7 @@ def midi_thread():
             # Read MIDI input
             for msg in midi_in.iter_pending():
                 handle_midi_message(msg, midi_out)
-            eventlet.sleep(0.001)
+            gevent.sleep(0.001)  # Use gevent.sleep instead of time.sleep
     except Exception as e:
         print(f"MIDI thread error: {e}")
 
@@ -37,18 +39,24 @@ def signal_handler(sig, frame):
     print("Shutting down gracefully...")
     running = False
     
-    # Clean up resources - schedule with eventlet to avoid blocking
-    def cleanup():
-        pygame.mixer.quit()
-        if hasattr(midi_in, 'close'):
-            midi_in.close()
-        if hasattr(midi_out, 'close'):
-            midi_out.close()
-        sys.exit(0)
+    # Clean up resources in a non-blocking way
+    pygame.mixer.quit()
+    if hasattr(midi_in, 'close'):
+        midi_in.close()
+    if hasattr(midi_out, 'close'):
+        midi_out.close()
     
-    # Schedule cleanup to run in a separate greenthread
-    eventlet.spawn_after(0.5, cleanup)
+    # Instead of calling sys.exit() directly, which is blocking,
+    # schedule a shutdown function
+    def shutdown():
+        # This gets run in a separate greenlet
+        print("Exiting application...")
+        # Force exit without calling sys.exit()
+        os._exit(0)
     
+    # Schedule shutdown after a delay
+    gevent.spawn_later(0.5, shutdown)
+
 # Register signal handlers
 signal.signal(signal.SIGINT, signal_handler)
 signal.signal(signal.SIGTERM, signal_handler)
@@ -76,9 +84,9 @@ except Exception as e:
     print(f"Could not determine IP address: {e}")
     print("Please check your network connection and use 'hostname -I' to find your IP")
 
-# Start threads as eventlet greenthreads instead of OS threads
-audio_greenthread = eventlet.spawn(audio_thread)
-midi_greenthread = eventlet.spawn(midi_thread)
+# Start threads as gevent greenlets instead of OS threads
+audio_greenlet = gevent.spawn(audio_thread)
+midi_greenlet = gevent.spawn(midi_thread)
 
 # Start the web server in the main thread
 print("Web server starting at http://localhost:6134")

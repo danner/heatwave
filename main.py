@@ -5,7 +5,7 @@ monkey.patch_all()
 import threading
 import pygame
 import signal
-import sys
+import os
 import gevent
 from midi import midi_in, midi_out, handle_midi_message
 from audio import update_volumes, update_pitches

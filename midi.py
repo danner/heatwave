@@ -1,4 +1,5 @@
 import mido
+import eventlet  # Add this import
 import threading
 import time
 from mido import MidiFile, Message, open_input, open_output
@@ -89,7 +90,7 @@ def midi_device_monitor():
     while True:
         if not midi_connected:
             connect_midi_devices()
-        time.sleep(5)  # Check every 5 seconds
+        eventlet.sleep(5)
 
 def handle_midi_message(message, midi_out):
     # Skip processing if we're using dummy devices
@@ -122,9 +123,8 @@ def handle_midi_message(message, midi_out):
     else:
         print(f"Unhandled MIDI message: {message}")
 
-# Start the MIDI device monitor thread
-midi_monitor_thread = threading.Thread(target=midi_device_monitor, daemon=True)
-midi_monitor_thread.start()
+# Start the MIDI device monitor thread - use eventlet instead
+midi_monitor_greenthread = eventlet.spawn(midi_device_monitor)
 
 # Try to connect to MIDI devices at startup
 print("Looking for MIDI devices...")

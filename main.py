@@ -1,9 +1,10 @@
-import threading
-import time
+# Apply eventlet monkey patching first - must be before any other imports
+import eventlet
+eventlet.monkey_patch()
+
 import pygame
 import signal
 import sys
-import eventlet  # Make sure this is at the top of the file
 from midi import midi_in, midi_out, handle_midi_message
 from audio import update_volumes, update_pitches
 from state import channels, set_lights_to_current_state, channel_log, load_channel_log, set_current_log_index
@@ -17,7 +18,7 @@ def audio_thread():
     while running:
         update_volumes(channels)
         update_pitches(channels)
-        time.sleep(0.01)  # Small sleep to reduce CPU usage
+        eventlet.sleep(0.01)
 
 # MIDI processing thread
 def midi_thread():
@@ -26,7 +27,7 @@ def midi_thread():
             # Read MIDI input
             for msg in midi_in.iter_pending():
                 handle_midi_message(msg, midi_out)
-            time.sleep(0.001)  # Small sleep to reduce CPU usage
+            eventlet.sleep(0.001)
     except Exception as e:
         print(f"MIDI thread error: {e}")
 
@@ -36,17 +37,18 @@ def signal_handler(sig, frame):
     print("Shutting down gracefully...")
     running = False
     
-    # Clean up resources
-    pygame.mixer.quit()
-    if hasattr(midi_in, 'close'):
-        midi_in.close()
-    if hasattr(midi_out, 'close'):
-        midi_out.close()
+    # Clean up resources - schedule with eventlet to avoid blocking
+    def cleanup():
+        pygame.mixer.quit()
+        if hasattr(midi_in, 'close'):
+            midi_in.close()
+        if hasattr(midi_out, 'close'):
+            midi_out.close()
+        sys.exit(0)
     
-    # Exit after a short delay to allow threads to finish
-    eventlet.sleep(0.5)  # Non-blocking sleep
-    sys.exit(0)
-
+    # Schedule cleanup to run in a separate greenthread
+    eventlet.spawn_after(0.5, cleanup)
+    
 # Register signal handlers
 signal.signal(signal.SIGINT, signal_handler)
 signal.signal(signal.SIGTERM, signal_handler)
@@ -74,13 +76,9 @@ except Exception as e:
     print(f"Could not determine IP address: {e}")
     print("Please check your network connection and use 'hostname -I' to find your IP")
 
-# Start the audio thread
-audio_thread_instance = threading.Thread(target=audio_thread, daemon=True)
-audio_thread_instance.start()
-
-# Start the MIDI thread
-midi_thread_instance = threading.Thread(target=midi_thread, daemon=True)
-midi_thread_instance.start()
+# Start threads as eventlet greenthreads instead of OS threads
+audio_greenthread = eventlet.spawn(audio_thread)
+midi_greenthread = eventlet.spawn(midi_thread)
 
 # Start the web server in the main thread
 print("Web server starting at http://localhost:6134")

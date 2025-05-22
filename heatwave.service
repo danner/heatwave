@@ -10,8 +10,8 @@ WorkingDirectory=/home/heatwave/heatwave-app
 ExecStart=/home/heatwave/heatwave-venv/bin/python main.py
 Restart=always
 RestartSec=5
-StandardOutput=syslog
-StandardError=syslog
+StandardOutput=journal
+StandardError=journal
 SyslogIdentifier=heatwave
 
 [Install]

@@ -2,7 +2,7 @@
 import eventlet
 eventlet.monkey_patch()
 
-from flask import Flask, render_template, jsonify
+from flask import Flask, render_template, jsonify, redirect, request, Response
 from flask_socketio import SocketIO, emit
 import threading
 import time
@@ -18,6 +18,35 @@ socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 
 # Reference to channels will be set from main.py
 channels_ref = None
+
+# Captive portal detection URLs
+@app.route('/generate_204')  # Android
+@app.route('/gen_204')  # Android
+@app.route('/connecttest.txt')  # Windows
+@app.route('/redirect')  # Windows
+@app.route('/hotspot-detect.html')  # iOS
+@app.route('/library/test/success.html')  # iOS
+@app.route('/success.txt')  # MacOS
+@app.route('/ncsi.txt')  # Windows
+def captive_portal_check():
+    # For iOS and MacOS, redirect to the main page
+    user_agent = request.headers.get('User-Agent', '').lower()
+    if 'cros' in user_agent or 'android' in user_agent:
+        # For Android, return a 204 status without content
+        return "", 204
+    else:
+        # For other devices, redirect to our interface
+        return redirect('/', code=302)
+
+# Captive portal detection - return success for Windows
+@app.route('/ncsi.txt')
+def ncsi():
+    return Response("Microsoft NCSI", mimetype="text/plain")
+
+# Captive portal detection - return success for iOS/MacOS
+@app.route('/success.txt')
+def success():
+    return Response("success", mimetype="text/plain")
 
 @app.route('/')
 def index():

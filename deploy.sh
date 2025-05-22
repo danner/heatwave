@@ -1,0 +1,62 @@
+#!/bin/bash
+
+# Heatwave deployment script
+# This script will copy configuration files to the correct locations and restart services
+
+# Exit on any error
+set -e
+
+# Configuration
+APP_DIR="/home/heatwave/heatwave-app"
+SYSTEMD_SERVICE_FILE="heatwave.service"
+DNSMASQ_CONF="dnsmasq.conf"
+NM_SCRIPT="nm-heatwave-ap.sh"
+NM_SCRIPT_DEST="/etc/NetworkManager/dispatcher.d/90-heatwave-ap"
+
+# Check if running as root
+if [ "$EUID" -ne 0 ]; then
+    echo "This script must be run as root"
+    echo "Try: sudo $0"
+    exit 1
+fi
+
+echo "Deploying Heatwave application..."
+
+# 1. Ensure the application directory exists
+echo "Checking application directory..."
+mkdir -p "$APP_DIR"
+
+# 2. Copy systemd service file
+echo "Installing systemd service file..."
+cp "$SYSTEMD_SERVICE_FILE" /etc/systemd/system/
+
+# 3. Copy dnsmasq configuration
+echo "Installing dnsmasq configuration..."
+cp "$DNSMASQ_CONF" "$APP_DIR/"
+
+# 4. Install NetworkManager dispatcher script
+echo "Installing NetworkManager dispatcher script..."
+cp "$NM_SCRIPT" "$NM_SCRIPT_DEST"
+chmod +x "$NM_SCRIPT_DEST"
+
+# 5. Reload systemd daemon
+echo "Reloading systemd daemon..."
+systemctl daemon-reload
+
+# 6. Restart the Heatwave service
+echo "Restarting Heatwave service..."
+if systemctl is-active --quiet heatwave; then
+    systemctl restart heatwave
+else
+    systemctl enable heatwave
+    systemctl start heatwave
+fi
+
+# 7. Restart NetworkManager to pick up the dispatcher script
+echo "Restarting NetworkManager..."
+systemctl restart NetworkManager
+
+echo "Deployment complete!"
+echo "Heatwave should now be running and will start automatically on boot."
+echo "Web interface is available at http://$(hostname -I | awk '{print $1}'):6134"
+echo "If using the AP mode, connect to the 'Heatwave' network to access the application."

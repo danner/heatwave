@@ -8,7 +8,7 @@ import signal
 import os
 import gevent
 from midi import midi_in, midi_out, handle_midi_message
-from audio import update_volumes, update_pitches
+from audio import update_volumes, update_pitches, monitor_and_apply_changes
 from state import channels, set_lights_to_current_state, channel_log, load_channel_log, set_current_log_index
 import web_server
 
@@ -20,6 +20,8 @@ def audio_thread():
     while running:
         update_volumes(channels)
         update_pitches(channels)
+        # Execute any pending frequency changes at zero-crossings
+        monitor_and_apply_changes()
         gevent.sleep(0.01)  # Use gevent.sleep instead of time.sleep
 
 # MIDI processing thread

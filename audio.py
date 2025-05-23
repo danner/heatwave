@@ -125,18 +125,3 @@ def monitor_and_apply_changes():
 
 # Start playing all sounds
 play_all_sounds()
-
-# Example of how to use this in your main loop
-def main_loop():
-    """
-    Example of how this would be used in your application's main loop.
-    You would call monitor_and_apply_changes regularly.
-    """
-    while True:
-        # Your existing application logic
-        
-        # Check and apply any pending audio changes
-        monitor_and_apply_changes()
-        
-        # Sleep to avoid consuming too much CPU
-        gevent.sleep(0.01)  # Check for changes 100 times per second

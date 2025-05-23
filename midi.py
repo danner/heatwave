@@ -58,6 +58,9 @@ def connect_midi_devices():
     if hasattr(midi_out, 'close') and not getattr(midi_out, 'closed', True):
         midi_out.close()
     
+    # Add a small delay to allow MIDI resources to be properly released
+    gevent.sleep(0.5)
+    
     try:
         # Check if our target devices are available
         input_names = mido.get_input_names()
@@ -127,15 +130,43 @@ def connect_midi_devices():
         if matching_input and matching_output:
             print(f"Found MIDI devices. Connecting to {matching_input}...")
             try:
-                midi_in = open_input(matching_input)
-                print(f"Successfully opened input device: {matching_input}")
+                # Add retry logic for opening MIDI input
+                retry_count = 0
+                while retry_count < 3:
+                    try:
+                        midi_in = open_input(matching_input)
+                        print(f"Successfully opened input device: {matching_input}")
+                        break
+                    except Exception as e:
+                        retry_count += 1
+                        print(f"Retry {retry_count}/3: Error opening input device '{matching_input}': {e}")
+                        gevent.sleep(1)  # Wait a second before retrying
+                
+                if retry_count == 3:
+                    print(f"Failed to open MIDI input after 3 attempts")
+                    return False
             except Exception as e:
                 print(f"Error opening input device '{matching_input}': {e}")
                 return False
                 
             try:
-                midi_out = open_output(matching_output)
-                print(f"Successfully opened output device: {matching_output}")
+                # Add retry logic for opening MIDI output
+                retry_count = 0
+                while retry_count < 3:
+                    try:
+                        midi_out = open_output(matching_output)
+                        print(f"Successfully opened output device: {matching_output}")
+                        break
+                    except Exception as e:
+                        retry_count += 1
+                        print(f"Retry {retry_count}/3: Error opening output device '{matching_output}': {e}")
+                        gevent.sleep(1)  # Wait a second before retrying
+                
+                if retry_count == 3:
+                    print(f"Failed to open MIDI output after 3 attempts")
+                    if hasattr(midi_in, 'close'):
+                        midi_in.close()
+                    return False
             except Exception as e:
                 print(f"Error opening output device '{matching_output}': {e}")
                 if hasattr(midi_in, 'close'):
@@ -146,8 +177,10 @@ def connect_midi_devices():
             print(f"Connected to MIDI input: {midi_in.name}")
             print(f"Connected to MIDI output: {midi_out.name}")
             
-            # Test the connection by sending a test message
+            # Add error handling for initial MIDI test
             try:
+                # Wait before sending the initial test message
+                gevent.sleep(0.5)
                 # Send a silent test message - Control Change for channel 15 (usually unused)
                 test_msg = Message('control_change', channel=15, control=127, value=0)
                 midi_out.send(test_msg)
@@ -157,7 +190,8 @@ def connect_midi_devices():
                 set_lights_to_current_state(midi_out)  # Update lights to current state
                 return True
             except Exception as e:
-                print(f"Error sending test message: {e}")
+                print(f"Error during initial MIDI handshake: {e}")
+                print("Try running fix_bluetooth_midi.sh to repair the Bluetooth MIDI profile")
                 if hasattr(midi_in, 'close'):
                     midi_in.close()
                 if hasattr(midi_out, 'close'):

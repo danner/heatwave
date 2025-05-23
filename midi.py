@@ -42,7 +42,7 @@ midi_out = DummyMidiOutput()
 midi_connected = False
 
 # Enable debugging
-MIDI_DEBUG = True
+MIDI_DEBUG = False
 
 # Target MIDI device names - these should match what's shown in mido.get_input/output_names()
 target_input_names = ['SMC-Mixer Bluetooth', 'SMC-Mixer', 'SMC-Mixer:SMC-Mixer Bluetooth 128:0']

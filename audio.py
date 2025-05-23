@@ -55,6 +55,9 @@ sounds = [create_sound(110, AMPLITUDE, RATE) for _ in range(8)]
 frequencies = [110 for _ in range(8)]  # Track the current frequency of each channel
 volumes = [AMPLITUDE for _ in range(8)]  # Track the current volume of each channel
 
+# Track pending changes for each channel
+pending_changes = [None for _ in range(8)]
+
 # Function to play all sounds continuously
 def play_all_sounds():
     for sound in sounds:
@@ -65,38 +68,75 @@ def update_volumes(channels):
     for i, channel in channels.items():
         volume = channel['volume'] if not channel['mute'] else 0
         if volume != volumes[i]:  # Only update if the volume has changed
-            print(f"Updating volume for channel {i} to {volume}")
+            print(f"Queuing volume update for channel {i} to {volume}")
+            
+            # We can update volume directly as it's less prone to clicks
             volumes[i] = volume
-            # Apply master volume to individual channel volume
             sounds[i].set_volume(volume * MASTER_VOLUME)
 
-# Function to update the pitch of each sound based on the frequency
+# Function to queue up a frequency change for a channel
 def update_pitches(channels):
     for i, channel in channels.items():
         freq = max(1, channel['frequency'])
         if freq != frequencies[i]:  # Only update if the frequency has changed
-            print(f"Updating frequency for channel {i} to {freq}")
-            frequencies[i] = freq
+            print(f"Queuing frequency update for channel {i} to {freq}")
+            # Queue the change instead of applying immediately
+            pending_changes[i] = freq
+
+# Function to monitor and apply pending changes at zero-crossings
+def monitor_and_apply_changes():
+    """
+    Monitor pending changes and apply them at zero-crossings.
+    This should be called regularly from your main loop.
+    """
+    for i, change in enumerate(pending_changes):
+        if change is not None:
+            # Generate the new wave
+            new_freq = change
+            wave = generate_sine_wave(new_freq, AMPLITUDE * MASTER_VOLUME, RATE)
             
-            # Generate a new wave that's guaranteed to start and end at zero-crossings
-            wave = generate_sine_wave(freq, AMPLITUDE * MASTER_VOLUME, RATE)
+            # Find a zero crossing in the new wave where we'll start playback
+            start_idx = find_zero_crossing(wave)
             
-            # Wait for a zero-crossing in the current sound before switching
-            # This helps reduce clicks by switching at amplitude zero
-            current_vol = sounds[i].get_volume()
+            # Rearrange the wave to start at the zero crossing
+            if start_idx > 0:
+                wave = np.concatenate((wave[start_idx:], wave[:start_idx]))
             
-            # Create the new sound first so it's ready
+            # Create new sound
             new_sound = pygame.sndarray.make_sound((wave * 32767).astype(np.int16))
             
-            # Simple approach: short fadeout then switch
-            sounds[i].fadeout(20)  # Very short fadeout (10ms)
-            gevent.sleep(0.01)  # Wait for fadeout
-            sounds[i].stop()
+            # Get the raw data from the current sound to examine its state
+            current_sound_buffer = pygame.sndarray.array(sounds[i])
             
-            # Set proper volume on new sound and play it
-            sounds[i] = new_sound
-            sounds[i].set_volume(volumes[i] * MASTER_VOLUME)
-            sounds[i].play(-1)
+            # Find zero crossing in the current sound buffer
+            # We'll use this to time our switch
+            zero_idx = find_zero_crossing(current_sound_buffer)
+            
+            if zero_idx > 0:
+                # We found a zero crossing - good time to switch
+                sounds[i].stop()
+                sounds[i] = new_sound
+                sounds[i].set_volume(volumes[i] * MASTER_VOLUME)
+                sounds[i].play(-1)
+                frequencies[i] = new_freq
+                pending_changes[i] = None
+                print(f"Applied frequency change for channel {i} at zero-crossing")
+            # If we couldn't find a zero crossing, we'll try again next cycle
 
 # Start playing all sounds
 play_all_sounds()
+
+# Example of how to use this in your main loop
+def main_loop():
+    """
+    Example of how this would be used in your application's main loop.
+    You would call monitor_and_apply_changes regularly.
+    """
+    while True:
+        # Your existing application logic
+        
+        # Check and apply any pending audio changes
+        monitor_and_apply_changes()
+        
+        # Sleep to avoid consuming too much CPU
+        gevent.sleep(0.01)  # Check for changes 100 times per second

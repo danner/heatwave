@@ -89,7 +89,7 @@ def update_pitches(channels):
             new_sound = pygame.sndarray.make_sound((wave * 32767).astype(np.int16))
             
             # Simple approach: short fadeout then switch
-            sounds[i].fadeout(10)  # Very short fadeout (10ms)
+            sounds[i].fadeout(20)  # Very short fadeout (10ms)
             gevent.sleep(0.01)  # Wait for fadeout
             sounds[i].stop()
             

@@ -1,8 +1,12 @@
 #!/bin/bash
-# Bluetooth MIDI troubleshooting and setup script for Raspberry Pi
+# Streamlined Bluetooth MIDI setup script for Raspberry Pi
 
-echo "===== HeatWave Bluetooth MIDI Setup Script ====="
-echo "This script will help diagnose and fix Bluetooth MIDI issues."
+# Set the MAC address of the SMC-Mixer device
+MIDI_DEVICE="B5:66:41:94:78:F5"
+MIDI_NAME="SMC-Mixer"
+
+echo "===== HeatWave Bluetooth MIDI Setup ====="
+echo "Setting up connection to $MIDI_NAME ($MIDI_DEVICE)"
 
 # Check if running as root
 if [ "$EUID" -ne 0 ]; then
@@ -10,38 +14,21 @@ if [ "$EUID" -ne 0 ]; then
   exit 1
 fi
 
-# Step 1: Install required packages
-echo "Step 1: Installing required Bluetooth packages..."
-apt-get update
-apt-get install -y bluetooth bluez bluez-tools pulseaudio-module-bluetooth python3-dbus
+# Install required packages
+echo "Installing required Bluetooth packages..."
+apt-get update -qq && apt-get install -y -qq bluetooth bluez bluez-tools
 
-# Step 2: Check Bluetooth service status
-echo -e "\nStep 2: Checking Bluetooth service status..."
-systemctl status bluetooth --no-pager
+# Restart and enable Bluetooth service
+echo "Configuring Bluetooth service..."
 systemctl restart bluetooth
-sleep 2
-echo "Enabling Bluetooth service to start on boot..."
 systemctl enable bluetooth
 
-# Step 3: Set executable permission for mido
-echo -e "\nStep 3: Setting correct permissions for Python MIDI packages..."
-# Find the virtual environment path (assumes it exists)
-VENV_PATH="/home/heatwave/heatwave-venv"
-if [ -d "$VENV_PATH" ]; then
-  # Make sure the heatwave user owns the virtual environment
-  chown -R heatwave:heatwave "$VENV_PATH"
-  echo "Fixed permissions for $VENV_PATH"
-else
-  echo "Warning: Virtual environment not found at $VENV_PATH"
-fi
+# Add user to bluetooth group
+usermod -a -G bluetooth heatwave
+usermod -a -G audio heatwave
 
-# Step 4: Load Bluetooth modules
-echo -e "\nStep 4: Loading Bluetooth modules..."
-modprobe btusb
-echo "btusb" >> /etc/modules
-
-# Step 5: Configure Bluetooth agent
-echo -e "\nStep 5: Configuring Bluetooth agent to auto-accept pairing requests..."
+# Configure Bluetooth settings
+echo "Configuring Bluetooth settings..."
 cat > /etc/bluetooth/main.conf << EOF
 [General]
 Name = HeatWave
@@ -54,55 +41,31 @@ AutoEnable=true
 AutoEnable=true
 EOF
 
-# Step 6: Add user to bluetooth group
-echo -e "\nStep 6: Adding heatwave user to bluetooth group..."
-usermod -a -G bluetooth heatwave
-
-# Step 7: Create a udev rule for better MIDI device permissions
-echo -e "\nStep 7: Creating udev rules for MIDI devices..."
-cat > /etc/udev/rules.d/99-midi.rules << EOF
-KERNEL=="midi*", GROUP="audio", MODE="0660"
-KERNEL=="amidi*", GROUP="audio", MODE="0660"
-SUBSYSTEMS=="usb", ATTRS{product}=="*MIDI*", GROUP="audio", MODE="0666"
-SUBSYSTEMS=="bluetooth", GROUP="audio", MODE="0666"
-EOF
-
-# Reload udev rules
-udevadm control --reload-rules && udevadm trigger
-
-# Step 8: Create a script for scanning and connecting to the target MIDI device
-echo -e "\nStep 8: Creating a Bluetooth scan and connection script..."
+# Create automatic connection script
+echo "Creating connection script..."
 cat > /usr/local/bin/connect-midi.sh << EOF
 #!/bin/bash
-# Script to scan, pair, and connect to SMC-Mixer Bluetooth MIDI device
+# Script to connect to SMC-Mixer Bluetooth MIDI device
 
-echo "Scanning for MIDI devices..."
+# Ensure Bluetooth is up and running
 hciconfig hci0 up
 bluetoothctl -- power on
 bluetoothctl -- agent on 
 bluetoothctl -- default-agent
-DEVICE=\$(bluetoothctl -- scan on | grep -i "SMC-Mixer" | awk '{print \$3}')
 
-if [ -z "\$DEVICE" ]; then
-  echo "SMC-Mixer not found."
-  exit 1
-fi
-
-echo "Found SMC-Mixer Bluetooth device with address \$DEVICE"
-bluetoothctl -- pair \$DEVICE
-bluetoothctl -- trust \$DEVICE
-bluetoothctl -- connect \$DEVICE
-
-echo "Connection attempt complete."
+# Connect to the MIDI device
+echo "Connecting to $MIDI_NAME ($MIDI_DEVICE)..."
+bluetoothctl -- trust $MIDI_DEVICE
+bluetoothctl -- connect $MIDI_DEVICE
 EOF
 
 chmod +x /usr/local/bin/connect-midi.sh
 
-# Step 9: Create a systemd service for auto-reconnecting at startup
-echo -e "\nStep 9: Creating a systemd service for automatic connection..."
+# Create systemd service for auto-reconnecting
+echo "Creating autostart service..."
 cat > /etc/systemd/system/bluetooth-midi-connect.service << EOF
 [Unit]
-Description=Connect to Bluetooth MIDI device
+Description=Connect to SMC-Mixer Bluetooth MIDI device
 After=bluetooth.service
 Requires=bluetooth.service
 
@@ -116,25 +79,13 @@ User=root
 WantedBy=multi-user.target
 EOF
 
+# Enable and start the service
 systemctl daemon-reload
 systemctl enable bluetooth-midi-connect.service
 
-# Step 10: Restart services and perform manual connection attempt
-echo -e "\nStep 10: Restarting Bluetooth and performing initial connection..."
-systemctl restart bluetooth
-
-echo -e "\nRunning connection script. Please make sure your MIDI controller is in pairing mode..."
+# Attempt to connect now
+echo "Attempting to connect to $MIDI_NAME now..."
 /usr/local/bin/connect-midi.sh
 
-echo -e "\n===== Setup Complete ====="
-echo "The system has been configured for Bluetooth MIDI. Reboot recommended."
-echo "After reboot, if the device doesn't connect automatically, run: sudo /usr/local/bin/connect-midi.sh"
-echo "To check Bluetooth status: bluetoothctl"
-echo "Common bluetoothctl commands:"
-echo "  - devices           (list paired devices)"
-echo "  - scan on           (scan for new devices)"
-echo "  - pair [MAC]        (pair with device)"
-echo "  - connect [MAC]     (connect to device)"
-echo "  - trust [MAC]       (trust device for auto-connection)"
-echo "  - info [MAC]        (get device info)"
-echo "===== End of Setup ====="
+echo "Setup complete. The system will automatically try to connect to $MIDI_NAME on startup."
+echo "To manually reconnect at any time, run: sudo /usr/local/bin/connect-midi.sh"

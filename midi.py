@@ -43,8 +43,8 @@ midi_out = DummyMidiOutput()
 midi_connected = False
 
 # Target MIDI device names
-target_input_name = 'SMC-Mixer Bluetooth'
-target_output_name = 'SMC-Mixer Bluetooth'
+target_input_names = ['SMC-Mixer Bluetooth', 'SMC-Mixer']
+target_output_names = ['SMC-Mixer Bluetooth', 'SMC-Mixer']
 
 def connect_midi_devices():
     """Try to connect to MIDI devices, return True if successful"""
@@ -61,10 +61,24 @@ def connect_midi_devices():
         input_names = mido.get_input_names()
         output_names = mido.get_output_names()
         
-        if target_input_name in input_names and target_output_name in output_names:
-            print(f"Found MIDI devices. Connecting to {target_input_name}...")
-            midi_in = open_input(target_input_name)
-            midi_out = open_output(target_output_name)
+        # Find matching input and output devices
+        matching_input = None
+        matching_output = None
+        
+        for target in target_input_names:
+            if target in input_names:
+                matching_input = target
+                break
+                
+        for target in target_output_names:
+            if target in output_names:
+                matching_output = target
+                break
+        
+        if matching_input and matching_output:
+            print(f"Found MIDI devices. Connecting to {matching_input}...")
+            midi_in = open_input(matching_input)
+            midi_out = open_output(matching_output)
             midi_connected = True
             print(f"Connected to MIDI input: {midi_in.name}")
             print(f"Connected to MIDI output: {midi_out.name}")

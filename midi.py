@@ -41,7 +41,10 @@ midi_in = DummyMidiInput()
 midi_out = DummyMidiOutput()
 midi_connected = False
 
-# Target MIDI device names
+# Enable debugging
+MIDI_DEBUG = True
+
+# Target MIDI device names - these should match what's shown in mido.get_input/output_names()
 target_input_names = ['SMC-Mixer Bluetooth', 'SMC-Mixer', 'SMC-Mixer:SMC-Mixer Bluetooth 128:0']
 target_output_names = ['SMC-Mixer Bluetooth', 'SMC-Mixer', 'SMC-Mixer:SMC-Mixer Bluetooth 128:0']
 
@@ -60,10 +63,32 @@ def connect_midi_devices():
         input_names = mido.get_input_names()
         output_names = mido.get_output_names()
         
-        # Find matching input and output devices
+        if MIDI_DEBUG:
+            print("\n----- MIDI Device Debug Info -----")
+            print(f"Available MIDI inputs ({len(input_names)}):")
+            for i, name in enumerate(input_names):
+                print(f"  {i}: '{name}'")
+            
+            print(f"\nAvailable MIDI outputs ({len(output_names)}):")
+            for i, name in enumerate(output_names):
+                print(f"  {i}: '{name}'")
+            
+            print("\nTarget input names we're looking for:")
+            for name in target_input_names:
+                status = "✓" if name in input_names else "✗"
+                print(f"  {status} '{name}'")
+            
+            print("\nTarget output names we're looking for:")
+            for name in target_output_names:
+                status = "✓" if name in output_names else "✗"
+                print(f"  {status} '{name}'")
+            print("---------------------------------\n")
+        
+        # Try exact matching first
         matching_input = None
         matching_output = None
         
+        # Try exact match
         for target in target_input_names:
             if target in input_names:
                 matching_input = target
@@ -74,27 +99,86 @@ def connect_midi_devices():
                 matching_output = target
                 break
         
+        # If exact match fails, try substring matching
+        if not matching_input or not matching_output:
+            if MIDI_DEBUG:
+                print("Exact match failed, trying substring matching...")
+            
+            for name in input_names:
+                for target in target_input_names:
+                    if target in name or name in target:
+                        matching_input = name
+                        if MIDI_DEBUG:
+                            print(f"Found input via substring match: '{matching_input}'")
+                        break
+                if matching_input:
+                    break
+                    
+            for name in output_names:
+                for target in target_output_names:
+                    if target in name or name in target:
+                        matching_output = name
+                        if MIDI_DEBUG:
+                            print(f"Found output via substring match: '{matching_output}'")
+                        break
+                if matching_output:
+                    break
+        
         if matching_input and matching_output:
             print(f"Found MIDI devices. Connecting to {matching_input}...")
-            midi_in = open_input(matching_input)
-            midi_out = open_output(matching_output)
+            try:
+                midi_in = open_input(matching_input)
+                print(f"Successfully opened input device: {matching_input}")
+            except Exception as e:
+                print(f"Error opening input device '{matching_input}': {e}")
+                return False
+                
+            try:
+                midi_out = open_output(matching_output)
+                print(f"Successfully opened output device: {matching_output}")
+            except Exception as e:
+                print(f"Error opening output device '{matching_output}': {e}")
+                if hasattr(midi_in, 'close'):
+                    midi_in.close()
+                return False
+                
             midi_connected = True
             print(f"Connected to MIDI input: {midi_in.name}")
             print(f"Connected to MIDI output: {midi_out.name}")
-            from state import set_lights_to_current_state
-            set_lights_to_current_state(midi_out)  # Update lights to current state
-            return True
+            
+            # Test the connection by sending a test message
+            try:
+                # Send a silent test message - Control Change for channel 15 (usually unused)
+                test_msg = Message('control_change', channel=15, control=127, value=0)
+                midi_out.send(test_msg)
+                print("Test message sent successfully!")
+                
+                from state import set_lights_to_current_state
+                set_lights_to_current_state(midi_out)  # Update lights to current state
+                return True
+            except Exception as e:
+                print(f"Error sending test message: {e}")
+                if hasattr(midi_in, 'close'):
+                    midi_in.close()
+                if hasattr(midi_out, 'close'):
+                    midi_out.close()
+                return False
         else:
+            if MIDI_DEBUG:
+                if not matching_input:
+                    print("No matching input device found!")
+                if not matching_output:
+                    print("No matching output device found!")
+                    
             midi_in = DummyMidiInput()
             midi_out = DummyMidiOutput()
             midi_connected = False
-            # print("Target MIDI devices not found. Using dummy MIDI devices.")
             return False
     except Exception as e:
+        print(f"General error in connect_midi_devices: {e}")
         midi_in = DummyMidiInput()
         midi_out = DummyMidiOutput()
         midi_connected = False
-        print(f"Error connecting to MIDI devices: {e}")
         return False
 
 # Function to periodically check for MIDI devices

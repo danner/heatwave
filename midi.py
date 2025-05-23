@@ -1,6 +1,5 @@
 import mido
 import gevent  # Change from threading and time to gevent
-import time  # Keep for non-critical operations
 from mido import MidiFile, Message, open_input, open_output
 from state import channels
 from midi_actions import note_to_action, adjust_frequency, adjust_volume, handle_button, handle_global_button
@@ -43,8 +42,8 @@ midi_out = DummyMidiOutput()
 midi_connected = False
 
 # Target MIDI device names
-target_input_names = ['SMC-Mixer Bluetooth', 'SMC-Mixer']
-target_output_names = ['SMC-Mixer Bluetooth', 'SMC-Mixer']
+target_input_names = ['SMC-Mixer Bluetooth', 'SMC-Mixer', 'SMC-Mixer:SMC-Mixer Bluetooth 128:0']
+target_output_names = ['SMC-Mixer Bluetooth', 'SMC-Mixer', 'SMC-Mixer:SMC-Mixer Bluetooth 128:0']
 
 def connect_midi_devices():
     """Try to connect to MIDI devices, return True if successful"""
@@ -103,7 +102,7 @@ def midi_device_monitor():
     while True:
         if not midi_connected:
             connect_midi_devices()
-        gevent.sleep(5)  # Use gevent.sleep instead of time.sleep
+        gevent.sleep(5)
 
 def handle_midi_message(message, midi_out):
     # Skip processing if we're using dummy devices

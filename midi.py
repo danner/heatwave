@@ -1,7 +1,7 @@
 import mido
 import gevent  # Change from threading and time to gevent
 from mido import MidiFile, Message, open_input, open_output
-from state import channels
+from state import channels, register_update_callback
 from midi_actions import note_to_action, adjust_frequency, adjust_volume, handle_button, handle_global_button
 
 # Define a dummy MIDI input class
@@ -47,6 +47,47 @@ MIDI_DEBUG = True
 # Target MIDI device names - these should match what's shown in mido.get_input/output_names()
 target_input_names = ['SMC-Mixer Bluetooth', 'SMC-Mixer', 'SMC-Mixer:SMC-Mixer Bluetooth 128:0']
 target_output_names = ['SMC-Mixer Bluetooth', 'SMC-Mixer', 'SMC-Mixer:SMC-Mixer Bluetooth 128:0']
+
+# Function to update MIDI controller when channel state changes
+def update_midi_controller(channel):
+    """Updates MIDI controller lights and faders when channel state changes"""
+    global midi_out, midi_connected
+    
+    if not midi_connected or not hasattr(midi_out, 'send'):
+        return
+        
+    try:
+        # Update mute button light
+        from constants import get_note_for_button
+        mute_note = get_note_for_button(channel, 'mute')
+        midi_out.send(Message('note_on', note=mute_note, 
+                             velocity=127 if channels[channel]['mute'] else 0))
+        
+        # Update select button light
+        select_note = get_note_for_button(channel, 'select')
+        midi_out.send(Message('note_on', note=select_note, 
+                             velocity=127 if channels[channel]['select'] else 0))
+        
+        # Update r button light
+        r_note = get_note_for_button(channel, 'r')
+        midi_out.send(Message('note_on', note=r_note, 
+                             velocity=127 if channels[channel]['r'] else 0))
+        
+        # Update box button light
+        box_note = get_note_for_button(channel, 'box')
+        midi_out.send(Message('note_on', note=box_note, 
+                             velocity=127 if channels[channel]['box'] else 0))
+        
+        # Update fader position with pitch wheel message
+        # Convert volume (0.0-1.0) to pitch wheel range (-8192 to 8191)
+        volume = channels[channel]['volume']
+        pitch_value = int(-8192 + (volume * 16383))
+        midi_out.send(Message('pitchwheel', channel=channel, pitch=pitch_value))
+        
+        if MIDI_DEBUG:
+            print(f"MIDI controller updated for channel {channel}")
+    except Exception as e:
+        print(f"Error updating MIDI controller: {e}")
 
 def connect_midi_devices():
     """Try to connect to MIDI devices, return True if successful"""
@@ -176,6 +217,10 @@ def connect_midi_devices():
             midi_connected = True
             print(f"Connected to MIDI input: {midi_in.name}")
             print(f"Connected to MIDI output: {midi_out.name}")
+            
+            # Register the MIDI controller update callback
+            register_update_callback(update_midi_controller)
+            print("Registered MIDI controller update callback")
             
             # Add error handling for initial MIDI test
             try:

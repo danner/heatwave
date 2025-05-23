@@ -19,35 +19,28 @@ def soft_clip(x, threshold=0.8):
     """
     return np.tanh(x / threshold) * threshold
 
-# Generate sine wave with envelope to prevent clicks
-def generate_sine_wave(freq, amplitude, rate, fade_ms=10):
-    # Ensure we have a complete number of cycles for smooth looping
-    cycles = max(1, int(rate / freq / 10))  # Use multiple cycles for better quality
-    # Number of samples needed for complete cycles
-    samples = int((cycles / freq) * rate)
-    t = np.linspace(0, 2 * np.pi * cycles, samples, endpoint=False)
-    wave = amplitude * np.sin(t)
+# Generate sine wave ensuring it starts and ends at zero-crossings
+def generate_sine_wave(freq, amplitude, rate):
+    # Calculate exact number of samples for complete cycles
+    # This ensures the waveform starts and ends at zero
+    cycle_length = rate / freq  # Samples per cycle
+    num_cycles = max(1, int(rate / freq / 10))  # Use multiple cycles for better quality
+    samples = int(num_cycles * cycle_length)
     
-    # Apply fade in/out envelopes to prevent clicks
-    fade_samples = int(rate * fade_ms / 1000)
-    if samples > fade_samples * 2:  # Only if we have enough samples
-        fade_in = np.linspace(0, 1, fade_samples)
-        fade_out = np.linspace(1, 0, fade_samples)
-        wave[:fade_samples] *= fade_in
-        wave[-fade_samples:] *= fade_out
+    # Ensure we have a complete number of cycles (ends at zero)
+    t = np.linspace(0, 2 * np.pi * num_cycles, samples, endpoint=False)
+    wave = amplitude * np.sin(t)
     
     # Apply soft clipping to prevent harsh distortion if amplitude is too high
     wave = soft_clip(wave)
     return wave.astype(np.float32)
 
-# Find zero-crossings in a waveform
-def find_zero_crossings(wave):
-    """Find indices where the waveform crosses from negative to positive (rising edge)"""
-    zero_crossings = []
+# Function to find a zero-crossing point in a wave (from negative to positive)
+def find_zero_crossing(wave):
     for i in range(len(wave) - 1):
-        if wave[i] <= 0 and wave[i+1] > 0:
-            zero_crossings.append(i + 1)
-    return zero_crossings
+        if wave[i] <= 0 and wave[i + 1] > 0:
+            return i + 1
+    return 0  # Default to start if no zero crossing found
 
 # Function to create and return a pygame Sound object
 def create_sound(freq, amplitude, rate):
@@ -85,47 +78,25 @@ def update_pitches(channels):
             print(f"Updating frequency for channel {i} to {freq}")
             frequencies[i] = freq
             
-            # Create new sound with zero-crossing optimization and envelope
-            new_wave = generate_sine_wave(freq, AMPLITUDE * MASTER_VOLUME, RATE, fade_ms=15)
+            # Generate a new wave that's guaranteed to start and end at zero-crossings
+            wave = generate_sine_wave(freq, AMPLITUDE * MASTER_VOLUME, RATE)
             
-            # Find zero crossings in the new wave
-            zero_crossings = find_zero_crossings(new_wave)
+            # Wait for a zero-crossing in the current sound before switching
+            # This helps reduce clicks by switching at amplitude zero
+            current_vol = sounds[i].get_volume()
             
-            # If we found zero crossings, start playback from one near the middle
-            # This creates a smoother phase transition
-            if zero_crossings:
-                middle_idx = len(zero_crossings) // 2
-                zero_point = zero_crossings[middle_idx]
-                # Rotate the wave to start at the zero crossing
-                new_wave = np.concatenate((new_wave[zero_point:], new_wave[:zero_point]))
+            # Create the new sound first so it's ready
+            new_sound = pygame.sndarray.make_sound((wave * 32767).astype(np.int16))
             
-            # Create new sound with the phase-optimized wave
-            new_sound = pygame.sndarray.make_sound((new_wave * 32767).astype(np.int16))
-            
-            # Extended crossfade to eliminate clicks
-            crossfade_steps = 30
-            crossfade_duration = 0.03  # 30ms total (1ms per step)
-            
-            # Start the new sound at zero volume
-            new_sound.set_volume(0)
-            new_sound.play(-1)
-            
-            # Perform smooth crossfade
-            for step in range(crossfade_steps + 1):
-                ratio = step / crossfade_steps
-                # Use curves instead of linear fades for smoother transition
-                # Sine curve for fade in/out (smoother than linear)
-                old_vol = volumes[i] * MASTER_VOLUME * np.cos(ratio * np.pi/2)
-                new_vol = volumes[i] * MASTER_VOLUME * np.sin(ratio * np.pi/2)
-                
-                sounds[i].set_volume(old_vol)
-                new_sound.set_volume(new_vol)
-                gevent.sleep(crossfade_duration / crossfade_steps)
-            
-            # Stop old sound and update to new sound
+            # Simple approach: short fadeout then switch
+            sounds[i].fadeout(10)  # Very short fadeout (10ms)
+            gevent.sleep(0.01)  # Wait for fadeout
             sounds[i].stop()
+            
+            # Set proper volume on new sound and play it
             sounds[i] = new_sound
             sounds[i].set_volume(volumes[i] * MASTER_VOLUME)
+            sounds[i].play(-1)
 
 # Start playing all sounds
 play_all_sounds()

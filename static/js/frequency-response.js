@@ -144,7 +144,7 @@ function calculateFrequencyResponse() {
         maxMagnitude = Math.max(DEFAULT_MAX_MAGNITUDE_DB, maxMagnitude + 5);
     }
     
-    console.log(`Magnitude range: ${minMagnitude.toFixed(2)}dB to ${maxMagnitude.toFixed(2)}dB`);
+    // console.log(`Magnitude range: ${minMagnitude.toFixed(2)}dB to ${maxMagnitude.toFixed(2)}dB`);
     
     // Second pass - create the dataset with the normalized values
     for (let i = 0; i <= FREQ_STEPS; i++) {
@@ -179,7 +179,7 @@ function calculateFrequencyResponse() {
 
 // Add this to ensure the frequency response chart updates with reflections changes
 function updateFrequencyResponse() {
-    console.log(`Updating frequency response chart with reflections=${window.reflections}, Q=${window.Q_FACTOR}...`);
+    // console.log(`Updating frequency response chart with reflections=${window.reflections}, Q=${window.Q_FACTOR}...`);
     const responseData = calculateFrequencyResponse();
     
     frequencyResponseChart.data.datasets[0].data = responseData;
@@ -195,7 +195,7 @@ function updateFrequencyResponse() {
         highLabel.textContent = `${maxMagnitude.toFixed(0)} dB`;
     }
     
-    console.log(`Generated ${responseData.length} data points for frequency response`);
+    // console.log(`Generated ${responseData.length} data points for frequency response`);
 }
 
 // Initialize and expose functions

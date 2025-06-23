@@ -19,16 +19,34 @@ channels = {
     7: {'frequency': 110, 'volume': 1.0, 'mute': True, 'select': False, 'r': False, 'box': False},
 }
 
+# New tube parameters state
+tube_params = {
+    'speed_of_sound': 258,        # m/s
+    'tube_length': 3.0,           # m
+    'tube_diameter': 0.10,        # m (10cm)
+    'damping_coefficient': 0.05,  # m^-1
+    'hole_size': 0.001,           # m (1mm)
+    'propane_pressure': 1.0,      # normalized
+    'reflections': 5,             # count
+    'q_factor': 5.0               # quality factor
+}
+
 channel_log = []
 _current_log_index = -1  # Initialize the current log index
 
-# Callback for channel updates - will be set by web_server.py
+# Callbacks for updates - will be set by web_server.py
 _update_callback = None
+_tube_update_callback = None
 
 def register_update_callback(callback_function):
     """Register a function to be called when channel state changes"""
     global _update_callback
     _update_callback = callback_function
+
+def register_tube_update_callback(callback_function):
+    """Register a function to be called when tube parameters change"""
+    global _tube_update_callback
+    _tube_update_callback = callback_function
 
 def get_current_log_index():
     return _current_log_index
@@ -36,6 +54,25 @@ def get_current_log_index():
 def set_current_log_index(value):
     global _current_log_index
     _current_log_index = value
+
+# Functions to update tube parameters
+def update_tube_param(param_name, value):
+    """Update a specific tube parameter"""
+    if param_name in tube_params:
+        tube_params[param_name] = value
+        notify_tube_updated(param_name)
+        return True
+    return False
+
+def notify_tube_updated(param_name=None):
+    """Notify listeners that tube parameters have changed"""
+    if _tube_update_callback:
+        _tube_update_callback(param_name)
+
+# Function to get all tube parameters
+def get_tube_params():
+    """Get a copy of all tube parameters"""
+    return dict(tube_params)
 
 # Function to handle frequency adjustment 
 def adjust_frequency(channel, value):

@@ -4,6 +4,9 @@
 window.isPaused = false;
 window.animationFrameId = null;
 
+// Use existing socket from channel-manager.js rather than creating a new one
+let socketIO = null;
+
 // Initialize all UI controls
 function initializeControls() {
     setupBasicControls();
@@ -13,6 +16,96 @@ function initializeControls() {
     setupHoleSizeControl();
     setupPressureControl();
     setupQFactorControl();
+    
+    // Initialize Socket.IO connection
+    initializeSocketIO();
+}
+
+// Initialize Socket.IO connection
+function initializeSocketIO() {
+    // Get socket reference from channel-manager.js
+    if (window.socket) {
+        socketIO = window.socket;
+        
+        // Listen for tube parameter updates
+        socketIO.on('update_tube_param', function(data) {
+            updateTubeParamControl(data.param, data.value);
+        });
+        
+        socketIO.on('update_tube_params', function(data) {
+            // Update all tube parameters at once
+            Object.entries(data).forEach(([param, value]) => {
+                updateTubeParamControl(param, value);
+            });
+        });
+        
+        // Request current tube parameters
+        socketIO.emit('request_tube_params');
+        console.log("Socket.IO initialized for UI controller");
+    } else {
+        console.log("Socket.IO not available - running in standalone mode");
+    }
+}
+
+// Update UI control based on tube parameter updates from server
+function updateTubeParamControl(param, value) {
+    // console.log(`Updating tube parameter: ${param} = ${value}`);
+    switch(param) {
+        case 'speed_of_sound':
+            document.getElementById('speedOfSound').value = value;
+            speedOfSound = value;
+            break;
+        case 'tube_length':
+            document.getElementById('tubeLength').value = value;
+            tubeLength = value;
+            break;
+        case 'tube_diameter':
+            document.getElementById('tubeDiameterSlider').value = value * 100;
+            document.getElementById('tubeDiameterValue').textContent = (value * 100).toFixed(1);
+            tubeDiameter = value;
+            break;
+        case 'damping_coefficient':
+            document.getElementById('dampingSlider').value = value;
+            document.getElementById('dampingValue').textContent = value.toFixed(2);
+            dampingCoefficient = value;
+            break;
+        case 'hole_size':
+            document.getElementById('holeSizeSlider').value = value * 1000;
+            document.getElementById('holeSizeValue').textContent = (value * 1000).toFixed(1);
+            holeSize = value;
+            break;
+        case 'propane_pressure':
+            document.getElementById('propanePressureSlider').value = value;
+            document.getElementById('propanePressureValue').textContent = value.toFixed(1);
+            propanePressure = value;
+            break;
+        case 'reflections':
+            document.getElementById('reflectionsInput').value = value;
+            window.reflections = value;
+            break;
+        case 'q_factor':
+            document.getElementById('qFactor').value = value;
+            document.getElementById('qFactor').nextElementSibling.textContent = value.toFixed(1);
+            window.Q_FACTOR = value;
+            break;
+    }
+    
+    // Update physics info and frequency response
+    updatePhysicsInfo();
+    if (window.updateFrequencyResponse) {
+        window.updateFrequencyResponse();
+    }
+}
+
+// Send tube parameter changes to server
+function emitTubeParamChange(param, value) {
+    if (socketIO && socketIO.connected) {
+        // console.log(`Emitting tube param change: ${param} = ${value}`);
+        socketIO.emit('change_tube_param', {
+            param: param,
+            value: value
+        });
+    }
 }
 
 // Set up basic controls (speed of sound, tube length, animation toggle)
@@ -21,12 +114,14 @@ function setupBasicControls() {
         speedOfSound = parseFloat(e.target.value);
         updatePhysicsInfo();
         window.updateFrequencyResponse();
+        emitTubeParamChange('speed_of_sound', speedOfSound);
     });
     
     document.getElementById('tubeLength').addEventListener('input', function(e) {
         tubeLength = parseFloat(e.target.value);
         updatePhysicsInfo();
         window.updateFrequencyResponse();
+        emitTubeParamChange('tube_length', tubeLength);
     });
     
     document.getElementById('toggleAnimationBtn').addEventListener('click', function() {
@@ -68,6 +163,7 @@ function setupDampingControl() {
             updateSimulation();
         }
         window.updateFrequencyResponse();
+        emitTubeParamChange('damping_coefficient', dampingCoefficient);
     });
 }
 
@@ -98,6 +194,8 @@ function setupReflectionsControl() {
             }
             updateSimulation();
         }
+        
+        emitTubeParamChange('reflections', window.reflections);
     });
 }
 
@@ -118,6 +216,7 @@ function setupTubeDiameterControl() {
         document.getElementById('tubeDiameterValue').textContent = e.target.value;
         updatePhysicsInfo();
         window.updateFrequencyResponse();
+        emitTubeParamChange('tube_diameter', tubeDiameter);
     });
 }
 
@@ -138,6 +237,7 @@ function setupHoleSizeControl() {
         document.getElementById('holeSizeValue').textContent = e.target.value;
         updatePhysicsInfo();
         window.updateFrequencyResponse();
+        emitTubeParamChange('hole_size', holeSize);
     });
 }
 
@@ -157,6 +257,7 @@ function setupPressureControl() {
         propanePressure = parseFloat(e.target.value);
         document.getElementById('propanePressureValue').textContent = e.target.value;
         updatePhysicsInfo();
+        emitTubeParamChange('propane_pressure', propanePressure);
     });
 }
 
@@ -199,6 +300,8 @@ function setupQFactorControl() {
         if (window.updateFrequencyResponse) {
             window.updateFrequencyResponse();
         }
+        
+        emitTubeParamChange('q_factor', window.Q_FACTOR);
     });
 }
 
@@ -352,7 +455,7 @@ function updateSimulation() {
         physicsStepsThisSecond++;
         const currentSecond = Math.floor(performance.now() / 1000);
         if (currentSecond > lastSecond) {
-            console.log(`Physics updates per second: ${physicsStepsThisSecond}`);
+            // console.log(`Physics updates per second: ${physicsStepsThisSecond}`);
             physicsStepsThisSecond = 0;
             lastSecond = currentSecond;
         }

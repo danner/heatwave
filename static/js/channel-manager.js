@@ -87,19 +87,28 @@ function handleChannelUpdate(data) {
     };
     
     // Update physics info since data changed
-    updatePhysicsInfo();
+    // Check if function exists before calling it
+    if (typeof window.updatePhysicsInfo === 'function') {
+        window.updatePhysicsInfo();
+    } else {
+        console.warn('updatePhysicsInfo not available yet');
+    }
 }
 
 function handleNewChannel(data) {
     // Add the new channel to our data
     channelData[data.channel] = data;
-    updatePhysicsInfo();
+    if (typeof window.updatePhysicsInfo === 'function') {
+        window.updatePhysicsInfo();
+    }
 }
 
 function handleChannelDeletion(data) {
     if (channelData[data.channel]) {
         delete channelData[data.channel];
-        updatePhysicsInfo();
+        if (typeof window.updatePhysicsInfo === 'function') {
+            window.updatePhysicsInfo();
+        }
     }
 }
 

@@ -3,7 +3,6 @@ from gevent import monkey
 monkey.patch_all()
 
 import threading
-import pygame
 import signal
 import os
 import gevent
@@ -40,7 +39,6 @@ def signal_handler(sig, frame):
     running = False
     
     # Clean up resources in a non-blocking way
-    pygame.mixer.quit()
     if hasattr(midi_in, 'close'):
         midi_in.close()
     if hasattr(midi_out, 'close'):

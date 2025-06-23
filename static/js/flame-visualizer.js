@@ -112,11 +112,11 @@ function animateFlames() {
         normalizedHeights = centeredFlameHeights.map(h => h > 0 ? h * positiveFactor : h);
     }
     
-    console.log("Average flame height:", avgFlameHeight);
-    console.log("Base height:", baseHeight);
-    console.log("Normalized heights:", normalizedHeights);
-    console.log("Actual total gas flow:", actualTotalGasFlow);
-    console.log("Expected total gas flow:", expectedTotalGasFlow);
+    // console.log("Average flame height:", avgFlameHeight);
+    // console.log("Base height:", baseHeight);
+    // console.log("Normalized heights:", normalizedHeights);
+    // console.log("Actual total gas flow:", actualTotalGasFlow);
+    // console.log("Expected total gas flow:", expectedTotalGasFlow);
     
     // Update each flame
     for (let i = 0; i < flames.length; i++) {

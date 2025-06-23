@@ -6,20 +6,28 @@
     <title>Rubens' Tube Simulation</title>
     <link rel="stylesheet" href="/static/css/visualization.css">
     
-    <!-- Local chart.js and plugins libraries -->
+    <!-- Socket.IO must be loaded first -->
+    <script src="/static/libs/socket.io.min.js"></script>
+    
+    <!-- Chart.js and plugins - ensure Chart.js is loaded before plugins -->
     <script src="/static/libs/chart.js"></script>
     <script src="/static/libs/chartjs-chart-matrix.js"></script>
     <script src="/static/libs/chartjs-plugin-colorschemes.js"></script>
-    <script src="/static/libs/socket.io.min.js"></script>
 
-    <!-- Application scripts -->
-    <script src="/static/js/visualization.js"></script>
-    <script src="/static/js/physics-engine.js"></script>
+    <!-- First load the channel manager so socket is available to UI controller -->
     <script src="/static/js/channel-manager.js"></script>
+    
+    <!-- Then load physics engine and visualization core -->
+    <script src="/static/js/physics-engine.js"></script>
+    <script src="/static/js/visualization.js"></script>
+    
+    <!-- Then load UI and visualization components -->
     <script src="/static/js/chart-manager.js"></script>
     <script src="/static/js/flame-visualizer.js"></script>
-    <script src="/static/js/ui-controller.js"></script>
     <script src="/static/js/frequency-response.js"></script>
+    
+    <!-- Load UI controller last since it depends on everything else -->
+    <script src="/static/js/ui-controller.js"></script>
     
     <script>
         // Simple initialization check when DOM is ready

@@ -62,6 +62,31 @@
         .global-button:hover {
             background-color: #f8f9fa;
         }
+        .audio-source-controls {
+            background-color: #457b9d;
+            color: white;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+        }
+        .source-selector {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 15px;
+        }
+        .source-selector label {
+            cursor: pointer;
+            width: auto;
+        }
+        .mic-controls {
+            background-color: rgba(255,255,255,0.2);
+            padding: 10px;
+            border-radius: 5px;
+        }
+        #mic-volume {
+            width: 200px;
+            margin: 0 10px;
+        }
     </style>
     <script src="/static/libs/socket.io.min.js"></script>
     <script src="/static/js/socket.js"></script>
@@ -92,6 +117,41 @@
         function handleGlobalUpdate() {
             socket.emit('request_all_channels'); // Request fresh state for all channels
         }
+
+        function updateMicControlsVisibility() {
+            const selectedSource = document.querySelector('input[name="audio-source"]:checked').value;
+            const micControls = document.querySelector('.mic-controls');
+            
+            if (selectedSource === 'mic') {
+                micControls.style.display = 'block';
+            } else {
+                micControls.style.display = 'none';
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            // Initialize audio source controls
+            updateMicControlsVisibility();
+
+            // Add change listener to audio source radios
+            document.querySelectorAll('input[name="audio-source"]').forEach(radio => {
+                radio.addEventListener('change', () => {
+                    const selectedSource = radio.value;
+                    socket.emit('change_audio_source', { source: selectedSource });
+                    updateMicControlsVisibility();
+                });
+            });
+
+            // Mic volume control
+            const micVolumeSlider = document.getElementById('mic-volume');
+            const micVolumeValue = document.getElementById('mic-volume-value');
+
+            micVolumeSlider.addEventListener('input', () => {
+                const value = parseFloat(micVolumeSlider.value);
+                micVolumeValue.textContent = `${Math.round(value * 100)}%`;
+                socket.emit('change_mic_volume', { volume: value });
+            });
+        });
     </script>
 </head>
 <body>
@@ -105,6 +165,31 @@
         <button id="forward-button" class="global-button">⏭ Forward</button>
     </div>
     
+    <div class="audio-source-controls">
+        <h3>Audio Source</h3>
+        <div class="source-selector">
+            <label>
+                <input type="radio" name="audio-source" value="synth" checked> Synthesizer
+            </label>
+            <label>
+                <input type="radio" name="audio-source" value="mic"> Microphone
+            </label>
+            <label>
+                <input type="radio" name="audio-source" value="pressure"> Pressure Model
+            </label>
+        </div>
+        <div class="mic-controls">
+            <label for="mic-volume">Mic Volume:</label>
+            <input type="range" id="mic-volume" min="0" max="1" step="0.01" value="0.5">
+            <span id="mic-volume-value">50%</span>
+        </div>
+        <div class="pressure-controls" style="display: none;">
+            <label for="pressure-volume">Pressure Volume:</label>
+            <input type="range" id="pressure-volume" min="0" max="1" step="0.01" value="0.5">
+            <span id="pressure-volume-value">50%</span>
+        </div>
+    </div>
+    
     <div class="nav-links">
         <a href="/visualization" class="btn">View Sound Wave Visualization</a>
     </div>
@@ -114,6 +199,87 @@
     </div>
 
     <script>
+        
+        // After the channels are created, set up audio source controls
+        document.addEventListener('DOMContentLoaded', function() {
+            // Audio source radio buttons
+            const sourceRadios = document.querySelectorAll('input[name="audio-source"]');
+            const micControls = document.querySelector('.mic-controls');
+            const pressureControls = document.querySelector('.pressure-controls');
+            const micVolumeSlider = document.getElementById('mic-volume');
+            const micVolumeValue = document.getElementById('mic-volume-value');
+            const pressureVolumeSlider = document.getElementById('pressure-volume');
+            const pressureVolumeValue = document.getElementById('pressure-volume-value');
+            
+            // Handle audio source selection
+            sourceRadios.forEach(radio => {
+                radio.addEventListener('change', function() {
+                    // Show/hide appropriate controls when switching sources
+                    if (this.value === 'mic') {
+                        micControls.style.display = 'block';
+                        pressureControls.style.display = 'none';
+                    } else if (this.value === 'pressure') {
+                        micControls.style.display = 'none';
+                        pressureControls.style.display = 'block';
+                    } else {
+                        micControls.style.display = 'none';
+                        pressureControls.style.display = 'none';
+                    }
+                    
+                    // Send audio source change to server
+                    socket.emit('set_audio_source', { source: this.value });
+                });
+            });
+            
+            // Handle mic volume changes
+            micVolumeSlider.addEventListener('input', function() {
+                const value = parseFloat(this.value);
+                micVolumeValue.textContent = `${Math.round(value * 100)}%`;
+                socket.emit('set_mic_volume', { volume: value });
+            });
+            
+            // Handle pressure model volume changes
+            pressureVolumeSlider.addEventListener('input', function() {
+                const value = parseFloat(this.value);
+                pressureVolumeValue.textContent = `${Math.round(value * 100)}%`;
+                socket.emit('set_pressure_volume', { volume: value });
+            });
+            
+            // Update UI from server settings
+            socket.on('update_audio_source', function(data) {
+                // Update radio buttons
+                sourceRadios.forEach(radio => {
+                    if (radio.value === data.source) {
+                        radio.checked = true;
+                        // Show/hide appropriate controls
+                        if (data.source === 'mic') {
+                            micControls.style.display = 'block';
+                            pressureControls.style.display = 'none';
+                        } else if (data.source === 'pressure') {
+                            micControls.style.display = 'none';
+                            pressureControls.style.display = 'block';
+                        } else {
+                            micControls.style.display = 'none';
+                            pressureControls.style.display = 'none';
+                        }
+                    }
+                });
+                
+                // Update volumes if provided
+                if (data.mic_volume !== undefined) {
+                    micVolumeSlider.value = data.mic_volume;
+                    micVolumeValue.textContent = `${Math.round(data.mic_volume * 100)}%`;
+                }
+                
+                if (data.pressure_volume !== undefined) {
+                    pressureVolumeSlider.value = data.pressure_volume;
+                    pressureVolumeValue.textContent = `${Math.round(data.pressure_volume * 100)}%`;
+                }
+            });
+            
+            // Request current audio source settings on load
+            socket.emit('request_audio_source');
+        });
         
         // Create UI for all 8 channels
         function createChannelUIs() {

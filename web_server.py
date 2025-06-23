@@ -8,8 +8,11 @@ import gevent
 # Only import from state.py - no circular dependencies
 from state import (
     channels, register_update_callback, adjust_frequency as state_adjust_frequency,
-    adjust_volume as state_adjust_volume, set_mute, handle_global_action
+    adjust_volume as state_adjust_volume, set_mute, handle_global_action,
+    # New imports from state.py
+    tube_params, update_tube_param, register_tube_update_callback, get_tube_params
 )
+from audio import set_audio_source, set_mic_volume, get_audio_source_settings
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'heatwave-secret!'
@@ -59,6 +62,11 @@ def visualization():
 def get_channels():
     # This should return the current state of your channels
     return jsonify(channels)
+
+@app.route('/api/tube_params')
+def get_tube_parameters():
+    # Return the current tube parameters
+    return jsonify(get_tube_params())
 
 @socketio.on('connect')
 def handle_connect():
@@ -120,12 +128,72 @@ def handle_request_all_channels():
                 'mute': channels_ref[i]['mute']
             })
 
+@socketio.on('set_audio_source')
+def handle_set_audio_source(data):
+    if 'source' in data:
+        source = data['source']
+        print(f"Web client changed audio source to: {source}")
+        set_audio_source(source)
+        # Broadcast to all clients
+        emit('update_audio_source', {
+            'source': source
+        }, broadcast=True)
+
+@socketio.on('set_mic_volume')
+def handle_set_mic_volume(data):
+    if 'volume' in data:
+        volume = float(data['volume'])
+        print(f"Web client changed mic volume to: {volume}")
+        set_mic_volume(volume)
+        # Broadcast to all clients except the sender
+        emit('update_audio_source', {
+            'mic_volume': volume
+        }, broadcast=True, include_self=False)
+
+@socketio.on('set_pressure_volume')
+def handle_set_pressure_volume(data):
+    if 'volume' in data:
+        volume = float(data['volume'])
+        print(f"Web client changed pressure model volume to: {volume}")
+        from audio import set_pressure_model_volume
+        set_pressure_model_volume(volume)
+        # Broadcast to all clients except the sender
+        emit('update_audio_source', {
+            'pressure_volume': volume
+        }, broadcast=True, include_self=False)
+
+@socketio.on('change_tube_param')
+def handle_tube_param_change(data):
+    if 'param' in data and 'value' in data:
+        param_name = data['param']
+        value = float(data['value']) if data['value'] is not None else None
+        
+        # Update the tube parameter
+        if update_tube_param(param_name, value):
+            print(f"Web client changed tube parameter {param_name} to {value}")
+            
+            # Broadcast to all clients except the sender
+            emit('update_tube_param', {
+                'param': param_name,
+                'value': value
+            }, broadcast=True, include_self=False)
+
+@socketio.on('request_tube_params')
+def handle_request_tube_params():
+    emit('update_tube_params', get_tube_params())
+
+@socketio.on('request_audio_source')
+def handle_request_audio_source():
+    settings = get_audio_source_settings()
+    emit('update_audio_source', settings)
+
 def start_web_server(channels):
     global channels_ref
     channels_ref = channels
     
-    # Register the broadcast function as a callback for state changes
+    # Register the broadcast functions as callbacks for state changes
     register_update_callback(broadcast_channel_update)
+    register_tube_update_callback(broadcast_tube_update)
     
     # Start Flask-SocketIO with gevent in the main thread
     print("Starting web server with gevent at http://0.0.0.0:6134")
@@ -143,3 +211,19 @@ def broadcast_channel_update(channel_number):
             })
         except Exception as e:
             print(f"Error broadcasting update: {e}")
+
+# Function to broadcast tube parameter updates to all web clients
+def broadcast_tube_update(param_name=None):
+    if socketio:
+        try:
+            if param_name is None:
+                # Send all parameters
+                socketio.emit('update_tube_params', get_tube_params())
+            else:
+                # Send just the updated parameter
+                socketio.emit('update_tube_param', {
+                    'param': param_name,
+                    'value': tube_params[param_name]
+                })
+        except Exception as e:
+            print(f"Error broadcasting tube update: {e}")

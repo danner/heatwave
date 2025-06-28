@@ -1,7 +1,7 @@
 import numpy as np
 import sounddevice as sd
 import threading
-from audio_core import RATE, AMPLITUDE, MASTER_VOLUME, INTERPOLATION_DURATION, soft_clip
+from audio_core import RATE, AMPLITUDE, MASTER_VOLUME, INTERPOLATION_DURATION, soft_clip, BUFFER_SIZE
 
 class ToneSynth:
     """Multi-channel synth class using sample-accurate control"""
@@ -26,8 +26,8 @@ class ToneSynth:
             channels=1,
             dtype='float32',
             callback=self.callback,
-            blocksize=256,  # Smaller blocksize for lower latency
-            latency='low'
+            blocksize=BUFFER_SIZE,  # Use larger buffer size from audio_core
+            latency='high'  # Use higher latency for stability on Raspberry Pi
         )
         self.stream.start()
         

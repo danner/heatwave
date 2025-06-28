@@ -2,7 +2,7 @@ import sounddevice as sd
 import threading
 import numpy as np
 import scipy.signal as signal
-from audio_core import RATE, AMPLITUDE, MASTER_VOLUME, find_mac_builtin_mic, soft_clip
+from audio_core import RATE, AMPLITUDE, MASTER_VOLUME, find_mac_builtin_mic, soft_clip, BUFFER_SIZE
 
 class MicInput:
     """Class for handling microphone input"""
@@ -38,18 +38,19 @@ class MicInput:
             return
             
         try:
+            # Use larger buffer size and high latency setting for stability on Raspberry Pi
             self.stream = sd.Stream(
                 samplerate=self.rate,
-                blocksize=256,
+                blocksize=BUFFER_SIZE,  # Use larger buffer from audio_core
                 dtype='float32',
                 channels=1,
                 callback=self.callback,
                 device=(self.input_device, None),  # (input, output)
-                latency='low'
+                latency='high'  # Higher latency for stability
             )
             self.active = True
             self.stream.start()
-            print("Microphone input started")
+            print(f"Microphone input started using device index {self.input_device}")
         except Exception as e:
             print(f"Error starting microphone stream: {e}")
             self.active = False

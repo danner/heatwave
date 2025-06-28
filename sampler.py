@@ -1,7 +1,7 @@
 import sounddevice as sd
 import threading
 import numpy as np
-from audio_core import RATE, AMPLITUDE, MASTER_VOLUME, soft_clip
+from audio_core import RATE, AMPLITUDE, MASTER_VOLUME, soft_clip, BUFFER_SIZE
 
 class SamplerInput:
     """Class for sample playback"""
@@ -73,8 +73,8 @@ class SamplerInput:
                 channels=1,
                 dtype='float32',
                 callback=self.callback,
-                blocksize=256,
-                latency='low'
+                blocksize=BUFFER_SIZE,  # Use larger buffer from audio_core
+                latency='high'  # Higher latency for stability
             )
             self.active = True
             self.sample_position = 0  # Reset playback position

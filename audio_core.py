@@ -6,14 +6,24 @@ RATE = 44100  # Sampling rate
 AMPLITUDE = 0.1  # Default volume
 MASTER_VOLUME = 0.8  # Master volume to prevent clipping
 INTERPOLATION_DURATION = 0.1  # Duration for frequency interpolation
+BUFFER_SIZE = 1024  # Increased buffer size to prevent underflows on Raspberry Pi
 
 def find_mac_builtin_mic():
-    """Find the Mac built-in microphone device"""
+    """Find the built-in microphone device"""
     devices = sd.query_devices()
+    
+    # First try to find USB PnP Sound Device for Raspberry Pi
+    for i, device in enumerate(devices):
+        if device['max_input_channels'] > 0 and 'USB PnP Sound Device' in device['name']:
+            print(f"Found USB PnP Sound Device for microphone: {device['name']}")
+            return i
+    
+    # Fall back to Mac built-in if not on Raspberry Pi
     for i, device in enumerate(devices):
         if device['max_input_channels'] > 0 and 'Built-in' in device['name'] and 'Microphone' in device['name']:
             print(f"Found Mac built-in microphone: {device['name']}")
             return i
+            
     # If no device with "Built-in" and "Microphone" found, try to find any input device
     for i, device in enumerate(devices):
         if device['max_input_channels'] > 0:

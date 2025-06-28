@@ -4,7 +4,7 @@ import numpy as np
 import gevent
 import time
 from scipy.optimize import minimize
-from audio_core import RATE, AMPLITUDE, MASTER_VOLUME, soft_clip, INTERPOLATION_DURATION
+from audio_core import RATE, AMPLITUDE, MASTER_VOLUME, soft_clip, INTERPOLATION_DURATION, BUFFER_SIZE
 from state import tube_params, channels
 from pressure_targets import PressureTargetSystem
 
@@ -137,8 +137,8 @@ class PressureAlgorithmInput:
                 channels=1,
                 dtype='float32',
                 callback=self.callback,
-                blocksize=256,
-                latency='low'
+                blocksize=BUFFER_SIZE,  # Use larger buffer from audio_core
+                latency='high'  # Higher latency for stability
             )
             self.active = True
             self.time = 0  # Reset simulation time

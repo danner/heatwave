@@ -31,6 +31,14 @@ if [ ! -d "static/libs" ] || [ -z "$(ls -A static/libs 2>/dev/null)" ]; then
     bash download_libs.sh
 fi
 
+# Install Python dependencies
+echo "Installing Python dependencies..."
+if [ -f "requirements.txt" ]; then
+    pip install -r requirements.txt
+else
+    echo "Warning: requirements.txt not found in current directory"
+fi
+
 # 1. Ensure the application directory exists
 echo "Checking application directory..."
 mkdir -p "$APP_DIR"

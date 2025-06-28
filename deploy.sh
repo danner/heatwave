@@ -34,7 +34,31 @@ fi
 # Install Python dependencies
 echo "Installing Python dependencies..."
 if [ -f "requirements.txt" ]; then
-    pip install -r requirements.txt
+    # Check if we're already in a virtual environment
+    if [ -n "$VIRTUAL_ENV" ]; then
+        echo "Using existing virtual environment: $VIRTUAL_ENV"
+        pip install -r requirements.txt
+    else
+        # Check if a venv exists in the app directory, if not create one
+        VENV_DIR="$APP_DIR/venv"
+        if [ ! -d "$VENV_DIR" ]; then
+            echo "Creating a virtual environment in $VENV_DIR"
+            python3 -m venv "$VENV_DIR"
+        else
+            echo "Using existing virtual environment in $VENV_DIR"
+        fi
+
+        # Activate and use the virtual environment to install packages
+        echo "Installing packages in the virtual environment..."
+        "$VENV_DIR/bin/pip" install -r requirements.txt
+
+        # Update the systemd service file to use the virtual environment
+        if [ -f "$SYSTEMD_SERVICE_FILE" ]; then
+            # Use sed to update the ExecStart path if needed
+            sed -i "s|^ExecStart=.*|ExecStart=$VENV_DIR/bin/python main.py|" "$SYSTEMD_SERVICE_FILE"
+            echo "Updated systemd service to use the virtual environment"
+        fi
+    fi
 else
     echo "Warning: requirements.txt not found in current directory"
 fi

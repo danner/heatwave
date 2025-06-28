@@ -31,6 +31,11 @@ if [ ! -d "static/libs" ] || [ -z "$(ls -A static/libs 2>/dev/null)" ]; then
     bash download_libs.sh
 fi
 
+# Install PortAudio and other system dependencies for audio
+echo "Installing system dependencies for audio..."
+apt-get update
+apt-get install -y libportaudio2 portaudio19-dev python3-dev python3-venv
+
 # Install Python dependencies
 echo "Installing Python dependencies..."
 if [ -f "requirements.txt" ]; then

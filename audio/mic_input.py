@@ -15,6 +15,10 @@ class MicInput:
         else:
             device_info = sd.query_devices(self.input_device)
             print(f"Using microphone: {device_info['name']}")
+            # Check if this is a USB microphone
+            self.is_usb_mic = 'USB' in device_info['name']
+            if self.is_usb_mic:
+                print("USB microphone detected - applying additional gain boost")
             
         self.lock = threading.Lock()
         self.volume = AMPLITUDE * MASTER_VOLUME
@@ -28,14 +32,17 @@ class MicInput:
         # Initialize filter state
         self.zi = signal.lfilter_zi(self.b, self.a)
         
-        # Compressor parameters
+        # Compressor parameters - increase default values for USB mics
         self.enable_compression = True
-        self.threshold = -30.0  # dB - lower means more signal gets compressed
-        self.ratio = 4.0        # compression ratio (higher means more compression)
-        self.attack = 0.005     # seconds - how fast compression kicks in
+        self.threshold = -40.0  # Lower threshold for more aggressive compression
+        self.ratio = 6.0        # Higher ratio for more compression
+        self.attack = 0.005     # Fast attack for quick response
         self.release = 0.100    # seconds - how fast compression releases
-        self.makeup_gain = 12.0 # dB - boost after compression
+        self.makeup_gain = 18.0 # Higher makeup gain (increased from 12dB)
         self.knee = 6.0         # dB - smoothing around threshold
+        
+        # Additional gain boost specifically for USB mics
+        self.usb_boost = 6.0    # Additional 3dB boost for USB mics
         
         # Compressor state variables
         self.env = 0.0          # envelope follower
@@ -89,7 +96,7 @@ class MicInput:
         with self.lock:
             self.volume = volume * MASTER_VOLUME
     
-    def set_compression(self, enable=True, threshold=None, ratio=None, makeup_gain=None):
+    def set_compression(self, enable=True, threshold=None, ratio=None, makeup_gain=None, usb_boost=None):
         """Configure the compressor settings"""
         with self.lock:
             self.enable_compression = enable
@@ -103,9 +110,13 @@ class MicInput:
             if makeup_gain is not None:
                 self.makeup_gain = float(makeup_gain)
                 
+            if usb_boost is not None and self.is_usb_mic:
+                self.usb_boost = float(usb_boost)
+                
             print(f"Compressor: {'enabled' if enable else 'disabled'}, "
                   f"threshold: {self.threshold}dB, ratio: {self.ratio}:1, "
-                  f"makeup: {self.makeup_gain}dB")
+                  f"makeup: {self.makeup_gain}dB, "
+                  f"USB boost: {self.usb_boost}dB")
     
     def _apply_compression(self, audio_buffer):
         """Apply dynamic range compression to the audio buffer"""
@@ -117,7 +128,13 @@ class MicInput:
         
         # Convert threshold and makeup gain from dB to linear
         threshold_lin = 10.0 ** (self.threshold / 20.0)
-        makeup_gain_lin = 10.0 ** (self.makeup_gain / 20.0)
+        
+        # Add USB boost to makeup gain if this is a USB mic
+        total_makeup_gain = self.makeup_gain
+        if hasattr(self, 'is_usb_mic') and self.is_usb_mic:
+            total_makeup_gain += self.usb_boost
+            
+        makeup_gain_lin = 10.0 ** (total_makeup_gain / 20.0)
         
         # Process each sample
         for i in range(len(audio_buffer)):

@@ -84,13 +84,13 @@ def set_mic_volume(volume, mic_input=None):
     mic_input.set_volume(volume)
     print(f"Microphone volume set to {volume}")
 
-def set_mic_compression(enable=True, threshold=-40.0, ratio=6.0, makeup_gain=18.0, usb_boost=3.0, mic_input=None):
+def set_mic_compression(enable=True, threshold=-40.0, ratio=6.0, makeup_gain=18.0, usb_boost=12.0, pre_amp=12.0, mic_input=None):
     """Configure microphone compressor settings"""
     if mic_input is None:
         # If mic_input isn't provided, import it here to avoid circular imports
         from . import mic_input
     
-    mic_input.set_compression(enable, threshold, ratio, makeup_gain, usb_boost)
+    mic_input.set_compression(enable, threshold, ratio, makeup_gain, usb_boost, pre_amp)
 
 def set_pressure_model_volume(volume, pressure_model=None):
     """Set the volume for pressure model"""

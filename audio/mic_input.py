@@ -2,6 +2,8 @@ import sounddevice as sd
 import threading
 import numpy as np
 import scipy.signal as signal
+import subprocess
+import os
 from .audio_core import RATE, AMPLITUDE, MASTER_VOLUME, find_mac_builtin_mic, soft_clip, BUFFER_SIZE
 
 class MicInput:
@@ -16,9 +18,13 @@ class MicInput:
             device_info = sd.query_devices(self.input_device)
             print(f"Using microphone: {device_info['name']}")
             # Check if this is a USB microphone
-            self.is_usb_mic = 'USB' in device_info['name']
+            self.is_usb_mic = ('USB' in device_info['name'] or 
+                              'usb' in device_info['name'] or 
+                              'PnP' in device_info['name'])
             if self.is_usb_mic:
                 print("USB microphone detected - applying additional gain boost")
+                # Check Raspberry Pi specific settings if available
+                self.check_raspi_alsa_settings()
             
         self.lock = threading.Lock()
         self.volume = AMPLITUDE * MASTER_VOLUME
@@ -32,6 +38,9 @@ class MicInput:
         # Initialize filter state
         self.zi = signal.lfilter_zi(self.b, self.a)
         
+        # Pre-amplification before compression (higher for USB mics)
+        self.pre_amp_gain = 12.0  # dB of gain before compression
+        
         # Compressor parameters - increase default values for USB mics
         self.enable_compression = True
         self.threshold = -40.0  # Lower threshold for more aggressive compression
@@ -41,8 +50,8 @@ class MicInput:
         self.makeup_gain = 18.0 # Higher makeup gain (increased from 12dB)
         self.knee = 6.0         # dB - smoothing around threshold
         
-        # Additional gain boost specifically for USB mics
-        self.usb_boost = 6.0    # Additional 3dB boost for USB mics
+        # Additional gain boost specifically for USB mics - increased for Raspberry Pi
+        self.usb_boost = 12.0   # Additional 12dB boost for USB mics (doubled from 6dB)
         
         # Compressor state variables
         self.env = 0.0          # envelope follower
@@ -54,6 +63,34 @@ class MicInput:
         self.rms_buffer = np.zeros(self.rms_buffer_size)
         self.rms_pos = 0
         self.level_meter = -60.0  # Current level meter in dB
+        
+    def check_raspi_alsa_settings(self):
+        """Check ALSA settings on Raspberry Pi and print helpful information"""
+        try:
+            # Check if we're on a Raspberry Pi
+            if os.path.exists('/etc/os-release'):
+                with open('/etc/os-release', 'r') as f:
+                    if 'raspbian' in f.read().lower():
+                        print("\n=== RASPBERRY PI USB MICROPHONE INFORMATION ===")
+                        print("If your USB mic is too quiet, try these commands:")
+                        print("  1. Check input devices: 'arecord -l'")
+                        print("  2. Check volume settings: 'alsamixer'")
+                        print("  3. Set max USB input gain: 'amixer -c 1 sset Mic 100%'")
+                        print("     (You may need to replace '-c 1' with your device number)")
+                        print("=================================================\n")
+                        
+                        # Try to get current volume settings
+                        try:
+                            result = subprocess.run(['amixer', 'sget', 'Mic'], 
+                                                  stdout=subprocess.PIPE, 
+                                                  stderr=subprocess.PIPE, 
+                                                  text=True)
+                            if result.returncode == 0:
+                                print("Current Mic Settings:", result.stdout.strip())
+                        except:
+                            pass
+        except:
+            pass  # Silently ignore errors in this diagnostic function
         
     def start(self):
         """Start capturing from the microphone and routing to output"""
@@ -96,7 +133,7 @@ class MicInput:
         with self.lock:
             self.volume = volume * MASTER_VOLUME
     
-    def set_compression(self, enable=True, threshold=None, ratio=None, makeup_gain=None, usb_boost=None):
+    def set_compression(self, enable=True, threshold=None, ratio=None, makeup_gain=None, usb_boost=None, pre_amp=None):
         """Configure the compressor settings"""
         with self.lock:
             self.enable_compression = enable
@@ -113,16 +150,24 @@ class MicInput:
             if usb_boost is not None and self.is_usb_mic:
                 self.usb_boost = float(usb_boost)
                 
+            if pre_amp is not None:
+                self.pre_amp_gain = float(pre_amp)
+                
             print(f"Compressor: {'enabled' if enable else 'disabled'}, "
+                  f"pre-amp: {self.pre_amp_gain}dB, "
                   f"threshold: {self.threshold}dB, ratio: {self.ratio}:1, "
                   f"makeup: {self.makeup_gain}dB, "
-                  f"USB boost: {self.usb_boost}dB")
+                  f"USB boost: {self.usb_boost if self.is_usb_mic else 0}dB")
     
     def _apply_compression(self, audio_buffer):
         """Apply dynamic range compression to the audio buffer"""
         # Skip if compression is disabled
         if not self.enable_compression:
             return audio_buffer
+            
+        # Apply pre-amplification before compression
+        pre_amp_linear = 10.0 ** (self.pre_amp_gain / 20.0)
+        pre_amped_buffer = audio_buffer * pre_amp_linear
             
         output = np.zeros_like(audio_buffer)
         
@@ -136,10 +181,10 @@ class MicInput:
             
         makeup_gain_lin = 10.0 ** (total_makeup_gain / 20.0)
         
-        # Process each sample
-        for i in range(len(audio_buffer)):
+        # Process each sample with pre-amplified signal
+        for i in range(len(pre_amped_buffer)):
             # Get absolute value of sample
-            input_sample = audio_buffer[i]
+            input_sample = pre_amped_buffer[i]
             abs_sample = abs(input_sample)
             
             # Update level detection (envelope follower)
@@ -175,17 +220,18 @@ class MicInput:
             smooth_gain = 0.9 * self.prev_gain + 0.1 * gain
             self.prev_gain = smooth_gain
             
-            # Apply gain to sample
-            output[i] = input_sample * smooth_gain
+            # Apply gain to original sample (not pre-amplified) to keep proper balance
+            output[i] = audio_buffer[i] * smooth_gain
             
             # Update RMS buffer for metering
-            self.rms_buffer[self.rms_pos] = input_sample * smooth_gain
+            self.rms_buffer[self.rms_pos] = output[i]
             self.rms_pos = (self.rms_pos + 1) % self.rms_buffer_size
             
-        # Update level meter (every 100ms)
+        # Update level meter occasionally
         if np.random.random() < len(audio_buffer) / (self.rate * 0.1):
             rms = np.sqrt(np.mean(self.rms_buffer**2))
             self.level_meter = 20.0 * np.log10(rms + 1e-10)
+            print(f"Mic level: {self.level_meter:.1f} dB")
             
         return output
             

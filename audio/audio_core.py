@@ -6,7 +6,7 @@ RATE = 44100  # Sampling rate
 AMPLITUDE = 0.1  # Default volume
 MASTER_VOLUME = 0.8  # Master volume to prevent clipping
 INTERPOLATION_DURATION = 0.05  # Faster interpolation
-BUFFER_SIZE = 1024  # Buffer size for stability
+BUFFER_SIZE = 2048  # Increased from 1024 to reduce underflows
 
 def find_mac_builtin_mic():
     """Find the built-in microphone device"""

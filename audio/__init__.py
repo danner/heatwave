@@ -2,6 +2,7 @@
 Audio package for HeatWave project.
 """
 import threading
+import time  # Add time import for underflow tracking
 
 # Import all core components
 from .audio_core import (

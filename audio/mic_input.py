@@ -1,7 +1,6 @@
 import sounddevice as sd
 import threading
 import numpy as np
-import scipy.signal as signal
 import subprocess
 import os
 from .audio_core import RATE, AMPLITUDE, MASTER_VOLUME, find_mac_builtin_mic, soft_clip, BUFFER_SIZE
@@ -31,26 +30,8 @@ class MicInput:
         self.active = False
         self.stream = None
         
-        # Design filters with lower order for better performance
-        nyquist = self.rate / 2
-        
-        # Reduce filter order from 4 to 2 for better performance
-        cutoff = 1000 / nyquist
-        self.b, self.a = signal.butter(2, cutoff, 'low')  # Reduced from order 4 to 2
-        self.zi = signal.lfilter_zi(self.b, self.a)
-        
-        # High-pass filter (cutoff at 100Hz)
-        hp_cutoff = 100 / nyquist
-        self.hp_b, self.hp_a = signal.butter(2, hp_cutoff, 'high')
-        self.hp_zi = signal.lfilter_zi(self.hp_b, self.hp_a)
-        
-        # Pre-calculate combined filter for better performance
-        self.combined_b, self.combined_a = signal.butter(2, [hp_cutoff, cutoff], 'bandpass')
-        self.combined_zi = signal.lfilter_zi(self.combined_b, self.combined_a)
-        
         # Additional gain boost specifically for USB mics - increased for Raspberry Pi
-        # Increased to compensate for removal of compression
-        self.usb_boost = 18.0   # Additional boost for USB mics (increased from 12dB)
+        self.usb_boost = 18.0   # Additional boost for USB mics
         
         # Processing history for dropout prevention
         self.prev_output = np.zeros(BUFFER_SIZE // 2)  # Store half a buffer of previous output
@@ -153,19 +134,13 @@ class MicInput:
                 # Get input data from microphone
                 input_data = indata[:, 0]
                 
-                # Use a single combined bandpass filter
-                filtered_data, self.combined_zi = signal.lfilter(
-                    self.combined_b, self.combined_a, 
-                    input_data, zi=self.combined_zi
-                )
-                
                 # Apply simple gain - add USB boost if needed
                 gain = self.volume
                 if hasattr(self, 'is_usb_mic') and self.is_usb_mic:
                     gain *= (10.0 ** (self.usb_boost / 20.0))  # Convert dB to linear gain
                 
-                # Apply gain to filtered data
-                processed = filtered_data * gain
+                # Apply gain to the raw input data
+                processed = input_data * gain
                 
                 # Apply soft clipping to prevent distortion
                 processed = soft_clip(processed)

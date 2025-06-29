@@ -43,16 +43,6 @@ class MicInput:
         self.hp_b, self.hp_a = signal.butter(2, hp_cutoff, 'high')
         self.hp_zi = signal.lfilter_zi(self.hp_b, self.hp_a)
         
-        # Noise gate parameters
-        self.enable_gate = True
-        self.gate_threshold = -50.0  # dB
-        self.gate_attack = 0.01      # seconds
-        self.gate_release = 0.1      # seconds
-        self.gate_attenuation = -40  # dB (how much to reduce signal below threshold)
-        self.gate_state = 0.0        # Current gate state (0-1)
-        self.gate_attack_coef = np.exp(-1.0 / (self.rate * self.gate_attack))
-        self.gate_release_coef = np.exp(-1.0 / (self.rate * self.gate_release))
-        
         # Pre-amplification before compression (higher for USB mics)
         self.pre_amp_gain = 12.0  # dB of gain before compression
         
@@ -178,48 +168,6 @@ class MicInput:
                   f"makeup: {self.makeup_gain}dB, "
                   f"USB boost: {self.usb_boost if self.is_usb_mic else 0}dB")
     
-    def set_noise_gate(self, enable=True, threshold=-50.0, attack=0.01, release=0.1, attenuation=-40.0):
-        """Configure the noise gate settings"""
-        with self.lock:
-            self.enable_gate = enable
-            self.gate_threshold = float(threshold)
-            self.gate_attack = float(attack)
-            self.gate_release = float(release)
-            self.gate_attenuation = float(attenuation)
-            
-            # Update coefficients
-            self.gate_attack_coef = np.exp(-1.0 / (self.rate * self.gate_attack))
-            self.gate_release_coef = np.exp(-1.0 / (self.rate * self.gate_release))
-            
-            print(f"Noise gate: {'enabled' if enable else 'disabled'}, "
-                  f"threshold: {self.gate_threshold}dB, attenuation: {self.gate_attenuation}dB")
-    
-    def _apply_noise_gate(self, audio_buffer):
-        """Apply noise gate to the audio buffer"""
-        if not self.enable_gate:
-            return audio_buffer
-        
-        # Calculate RMS of input buffer
-        rms = np.sqrt(np.mean(audio_buffer**2) + 1e-10)
-        level_db = 20 * np.log10(rms)
-        
-        # Process gate state using smoothing coefficients
-        if level_db >= self.gate_threshold:
-            # Signal is above threshold - open gate
-            self.gate_state = self.gate_attack_coef * self.gate_state + (1.0 - self.gate_attack_coef)
-        else:
-            # Signal is below threshold - close gate
-            self.gate_state = self.gate_release_coef * self.gate_state
-            
-        # Apply gate smoothly using vectorized operations
-        if self.gate_state < 0.99:  # Only process if gate isn't fully open
-            # Calculate attenuation factor based on gate state
-            attenuation_factor = np.power(10.0, (self.gate_attenuation * (1.0 - self.gate_state)) / 20.0)
-            return audio_buffer * attenuation_factor
-        else:
-            # Gate fully open - pass signal unchanged
-            return audio_buffer
-    
     def _apply_compression(self, audio_buffer):
         """Apply dynamic range compression to the audio buffer"""
         # Skip if compression is disabled
@@ -314,11 +262,8 @@ class MicInput:
                 # Apply the low-pass filter to remove high frequencies
                 filtered_data, self.zi = signal.lfilter(self.b, self.a, hp_filtered, zi=self.zi)
                 
-                # Apply noise gate to remove background noise
-                gated_data = self._apply_noise_gate(filtered_data)
-                
                 # Apply compression
-                compressed_data = self._apply_compression(gated_data)
+                compressed_data = self._apply_compression(filtered_data)
                 
                 # Apply volume to microphone input
                 processed = compressed_data * self.volume

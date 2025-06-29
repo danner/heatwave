@@ -92,15 +92,6 @@ def set_mic_compression(enable=True, threshold=-40.0, ratio=6.0, makeup_gain=18.
     
     mic_input.set_compression(enable, threshold, ratio, makeup_gain, usb_boost, pre_amp)
 
-def set_mic_noise_gate(enable=True, threshold=-50.0, attenuation=-40.0, mic_input=None):
-    """Configure microphone noise gate settings"""
-    if mic_input is None:
-        # If mic_input isn't provided, import it here to avoid circular imports
-        from . import mic_input
-        
-    mic_input.set_noise_gate(enable, threshold, 0.01, 0.1, attenuation)
-    print(f"Noise gate {'enabled' if enable else 'disabled'} with threshold {threshold}dB")
-
 def set_pressure_model_volume(volume, pressure_model=None):
     """Set the volume for pressure model"""
     if pressure_model is None:

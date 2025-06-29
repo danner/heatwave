@@ -13,9 +13,13 @@ class ToneSynth:
         
         # Simplified state - only the essential variables
         self.phases = np.zeros(num_channels)
-        self.frequencies = np.ones(num_channels) * 110.0
+        self.frequencies = np.ones(num_channels) * 110.0  # Target frequencies
+        self.current_frequencies = np.ones(num_channels) * 110.0  # Actual frequencies for synthesis
         self.volumes = np.ones(num_channels) * AMPLITUDE
         self.muted = np.zeros(num_channels, dtype=bool)
+        
+        # Interpolation settings
+        self.freq_change_factor = 0.05  # Adjust this to control transition speed
         
         # For tracking errors and performance
         self.error_count = 0
@@ -35,7 +39,7 @@ class ToneSynth:
         self.stream.start()
     
     def set_frequency(self, channel, freq):
-        """Set frequency for a channel (thread-safe)"""
+        """Set target frequency for a channel (thread-safe)"""
         if not (0 <= channel < self.num_channels):
             return False
             
@@ -44,6 +48,7 @@ class ToneSynth:
         
         with self.lock:
             if self.frequencies[channel] != freq:
+                # Only update target frequency
                 self.frequencies[channel] = freq
                 return True
         return False
@@ -71,7 +76,8 @@ class ToneSynth:
             
             # Only lock when copying the data
             with self.lock:
-                local_frequencies = self.frequencies.copy()
+                local_target_frequencies = self.frequencies.copy()
+                local_current_frequencies = self.current_frequencies.copy()
                 local_volumes = self.volumes.copy()
                 local_muted = self.muted.copy()
                 local_phases = self.phases.copy()
@@ -81,11 +87,34 @@ class ToneSynth:
                 if local_muted[ch]:
                     continue
                     
-                # Simple sine wave generation - no interpolation
-                freq = local_frequencies[ch]
+                # Interpolate frequency for this buffer
+                current_freq = local_current_frequencies[ch]
+                target_freq = local_target_frequencies[ch]
+                
+                if abs(current_freq - target_freq) > 0.01:
+                    # Smoothly interpolate toward target frequency
+                    diff = target_freq - current_freq
+                    # Use a proportional change for smoother transitions
+                    change = diff * self.freq_change_factor
+                    # Ensure minimum movement to avoid getting stuck
+                    if abs(change) < 0.01:
+                        change = 0.01 * (1 if diff > 0 else -1)
+                    new_freq = current_freq + change
+                    
+                    # Update the current frequency for next time
+                    local_current_frequencies[ch] = new_freq
+                    
+                    # Use the interpolated frequency
+                    freq = new_freq
+                else:
+                    # We've reached the target
+                    local_current_frequencies[ch] = target_freq
+                    freq = target_freq
+                
+                # Generate sine wave using interpolated frequency
                 volume = local_volumes[ch] * MASTER_VOLUME
                 
-                # Generate sine wave
+                # Generate sine wave with current phase for continuity
                 phase_inc = 2 * np.pi * freq / self.rate
                 phases = local_phases[ch] + np.arange(frames) * phase_inc
                 wave = volume * np.sin(phases)
@@ -102,9 +131,10 @@ class ToneSynth:
             # Copy to output buffer
             outdata[:, 0] = output
             
-            # Only lock when updating phases
+            # Only lock when updating phases and current frequencies
             with self.lock:
                 self.phases = local_phases
+                self.current_frequencies = local_current_frequencies
             
             # Update successful callback time
             self.last_successful_callback = time.time()

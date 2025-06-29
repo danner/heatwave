@@ -17,7 +17,7 @@ from .audio_manager import (
     current_source, frequencies, volumes,
     set_audio_source, get_audio_source_settings,
     set_mic_volume, set_pressure_model_volume,
-    update_volumes, update_pitches, set_mic_compression
+    update_volumes, update_pitches, set_mic_compression, set_mic_noise_gate
 )
 
 # Initialize instances
@@ -46,6 +46,7 @@ __all__ = [
     'update_volumes', 'update_pitches', 'set_audio_source',
     'get_audio_source_settings', 'set_mic_volume', 'set_pressure_model_volume',
     'find_mac_builtin_mic', 'soft_clip', 'list_audio_devices', 'set_mic_compression',
+    'set_mic_noise_gate',
     # Constants
     'RATE', 'AMPLITUDE', 'MASTER_VOLUME', 'INTERPOLATION_DURATION', 'BUFFER_SIZE',
     # State

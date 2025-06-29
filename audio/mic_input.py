@@ -38,6 +38,21 @@ class MicInput:
         # Initialize filter state
         self.zi = signal.lfilter_zi(self.b, self.a)
         
+        # Add high-pass filter to remove hum (cutoff at 100Hz)
+        hp_cutoff = 100 / nyquist
+        self.hp_b, self.hp_a = signal.butter(2, hp_cutoff, 'high')
+        self.hp_zi = signal.lfilter_zi(self.hp_b, self.hp_a)
+        
+        # Noise gate parameters
+        self.enable_gate = True
+        self.gate_threshold = -50.0  # dB
+        self.gate_attack = 0.01      # seconds
+        self.gate_release = 0.1      # seconds
+        self.gate_attenuation = -40  # dB (how much to reduce signal below threshold)
+        self.gate_state = 0.0        # Current gate state (0-1)
+        self.gate_attack_coef = np.exp(-1.0 / (self.rate * self.gate_attack))
+        self.gate_release_coef = np.exp(-1.0 / (self.rate * self.gate_release))
+        
         # Pre-amplification before compression (higher for USB mics)
         self.pre_amp_gain = 12.0  # dB of gain before compression
         
@@ -63,6 +78,10 @@ class MicInput:
         self.rms_buffer = np.zeros(self.rms_buffer_size)
         self.rms_pos = 0
         self.level_meter = -60.0  # Current level meter in dB
+        
+        # Processing history for dropout prevention
+        self.prev_output = np.zeros(BUFFER_SIZE // 2)  # Store half a buffer of previous output
+        self.process_count = 0
         
     def check_raspi_alsa_settings(self):
         """Check ALSA settings on Raspberry Pi and print helpful information"""
@@ -159,41 +178,86 @@ class MicInput:
                   f"makeup: {self.makeup_gain}dB, "
                   f"USB boost: {self.usb_boost if self.is_usb_mic else 0}dB")
     
+    def set_noise_gate(self, enable=True, threshold=-50.0, attack=0.01, release=0.1, attenuation=-40.0):
+        """Configure the noise gate settings"""
+        with self.lock:
+            self.enable_gate = enable
+            self.gate_threshold = float(threshold)
+            self.gate_attack = float(attack)
+            self.gate_release = float(release)
+            self.gate_attenuation = float(attenuation)
+            
+            # Update coefficients
+            self.gate_attack_coef = np.exp(-1.0 / (self.rate * self.gate_attack))
+            self.gate_release_coef = np.exp(-1.0 / (self.rate * self.gate_release))
+            
+            print(f"Noise gate: {'enabled' if enable else 'disabled'}, "
+                  f"threshold: {self.gate_threshold}dB, attenuation: {self.gate_attenuation}dB")
+    
+    def _apply_noise_gate(self, audio_buffer):
+        """Apply noise gate to the audio buffer"""
+        if not self.enable_gate:
+            return audio_buffer
+        
+        # Calculate RMS of input buffer
+        rms = np.sqrt(np.mean(audio_buffer**2) + 1e-10)
+        level_db = 20 * np.log10(rms)
+        
+        # Process gate state using smoothing coefficients
+        if level_db >= self.gate_threshold:
+            # Signal is above threshold - open gate
+            self.gate_state = self.gate_attack_coef * self.gate_state + (1.0 - self.gate_attack_coef)
+        else:
+            # Signal is below threshold - close gate
+            self.gate_state = self.gate_release_coef * self.gate_state
+            
+        # Apply gate smoothly using vectorized operations
+        if self.gate_state < 0.99:  # Only process if gate isn't fully open
+            # Calculate attenuation factor based on gate state
+            attenuation_factor = np.power(10.0, (self.gate_attenuation * (1.0 - self.gate_state)) / 20.0)
+            return audio_buffer * attenuation_factor
+        else:
+            # Gate fully open - pass signal unchanged
+            return audio_buffer
+    
     def _apply_compression(self, audio_buffer):
         """Apply dynamic range compression to the audio buffer"""
         # Skip if compression is disabled
         if not self.enable_compression:
             return audio_buffer
             
-        # Apply pre-amplification before compression
+        # Apply pre-amplification before compression - using vectorized operation
         pre_amp_linear = 10.0 ** (self.pre_amp_gain / 20.0)
         pre_amped_buffer = audio_buffer * pre_amp_linear
             
-        output = np.zeros_like(audio_buffer)
-        
-        # Convert threshold and makeup gain from dB to linear
-        threshold_lin = 10.0 ** (self.threshold / 20.0)
-        
-        # Add USB boost to makeup gain if this is a USB mic
+        # Calculate additional gain for USB microphones
         total_makeup_gain = self.makeup_gain
         if hasattr(self, 'is_usb_mic') and self.is_usb_mic:
             total_makeup_gain += self.usb_boost
-            
+        
+        # Convert threshold and makeup gain from dB to linear
+        threshold_lin = 10.0 ** (self.threshold / 20.0)
         makeup_gain_lin = 10.0 ** (total_makeup_gain / 20.0)
         
-        # Process each sample with pre-amplified signal
-        for i in range(len(pre_amped_buffer)):
-            # Get absolute value of sample
-            input_sample = pre_amped_buffer[i]
-            abs_sample = abs(input_sample)
+        # Optimize compression by using vectorized operations where possible
+        # Process buffer in chunks for better performance
+        output = np.zeros_like(audio_buffer)
+        chunk_size = 32  # Process 32 samples at a time
+        
+        for chunk_start in range(0, len(pre_amped_buffer), chunk_size):
+            chunk_end = min(chunk_start + chunk_size, len(pre_amped_buffer))
+            chunk = pre_amped_buffer[chunk_start:chunk_end]
+            
+            # Get max absolute value for this chunk
+            chunk_abs_max = np.max(np.abs(chunk))
             
             # Update level detection (envelope follower)
-            if abs_sample > self.env:
+            if chunk_abs_max > self.env:
                 # Attack phase - fast rise
-                self.env = self.attack_coef * self.env + (1.0 - self.attack_coef) * abs_sample
+                self.env = self.attack_coef * self.env + (1.0 - self.attack_coef) * chunk_abs_max
             else:
                 # Release phase - slow decay
-                self.env = self.release_coef * self.env + (1.0 - self.release_coef) * abs_sample
+                self.env = self.release_coef * self.env + (1.0 - self.release_coef) * chunk_abs_max
             
             # Determine gain reduction amount with soft knee
             env_db = 20.0 * np.log10(self.env + 1e-10)
@@ -220,18 +284,17 @@ class MicInput:
             smooth_gain = 0.9 * self.prev_gain + 0.1 * gain
             self.prev_gain = smooth_gain
             
-            # Apply gain to original sample (not pre-amplified) to keep proper balance
-            output[i] = audio_buffer[i] * smooth_gain
+            # Apply gain to original samples (not pre-amplified)
+            output[chunk_start:chunk_end] = audio_buffer[chunk_start:chunk_end] * smooth_gain
             
-            # Update RMS buffer for metering
-            self.rms_buffer[self.rms_pos] = output[i]
+            # Update RMS buffer for metering (just use the first sample of each chunk)
+            self.rms_buffer[self.rms_pos] = output[chunk_start]
             self.rms_pos = (self.rms_pos + 1) % self.rms_buffer_size
-            
+        
         # Update level meter occasionally
-        if np.random.random() < len(audio_buffer) / (self.rate * 0.1):
-            rms = np.sqrt(np.mean(self.rms_buffer**2))
-            self.level_meter = 20.0 * np.log10(rms + 1e-10)
-            print(f"Mic level: {self.level_meter:.1f} dB")
+        if np.random.random() < len(audio_buffer) / (self.rate * 0.5):  # Less frequent updates
+            rms = np.sqrt(np.mean(self.rms_buffer**2) + 1e-10)
+            self.level_meter = 20.0 * np.log10(rms)
             
         return output
             
@@ -239,19 +302,50 @@ class MicInput:
         """Process audio data from microphone to output"""
         if status:
             print(f"Mic input callback status: {status}")
-            
-        with self.lock:
-            # Apply the low-pass filter to remove frequencies above 1000Hz
-            filtered_data, self.zi = signal.lfilter(self.b, self.a, indata[:, 0], zi=self.zi)
-            
-            # Apply compression
-            compressed_data = self._apply_compression(filtered_data)
-            
-            # Apply volume to microphone input
-            processed = compressed_data * self.volume
-            
-            # Apply soft clipping to prevent distortion
-            processed = soft_clip(processed)
-            
-            # Copy to output
-            outdata[:, 0] = processed.astype(np.float32)
+        
+        try:
+            with self.lock:
+                # Get input data from the microphone
+                input_data = indata[:, 0]
+                
+                # Apply high-pass filter to remove low-frequency hum
+                hp_filtered, self.hp_zi = signal.lfilter(self.hp_b, self.hp_a, input_data, zi=self.hp_zi)
+                
+                # Apply the low-pass filter to remove high frequencies
+                filtered_data, self.zi = signal.lfilter(self.b, self.a, hp_filtered, zi=self.zi)
+                
+                # Apply noise gate to remove background noise
+                gated_data = self._apply_noise_gate(filtered_data)
+                
+                # Apply compression
+                compressed_data = self._apply_compression(gated_data)
+                
+                # Apply volume to microphone input
+                processed = compressed_data * self.volume
+                
+                # Apply soft clipping to prevent distortion
+                processed = soft_clip(processed)
+                
+                # Smooth transitions between buffers to prevent clicks
+                if self.process_count > 0:
+                    # Cross-fade between previous buffer tail and current buffer head
+                    crossfade_len = min(len(self.prev_output), len(processed) // 4)
+                    if crossfade_len > 0:
+                        fade_in = np.linspace(0, 1, crossfade_len)
+                        fade_out = np.linspace(1, 0, crossfade_len)
+                        processed[:crossfade_len] = (
+                            processed[:crossfade_len] * fade_in + 
+                            self.prev_output[-crossfade_len:] * fade_out
+                        )
+                
+                # Store the end of the current buffer for next time
+                self.prev_output = processed[-min(len(processed) // 2, len(self.prev_output)):]
+                self.process_count += 1
+                
+                # Copy to output
+                outdata[:, 0] = processed.astype(np.float32)
+                
+        except Exception as e:
+            # Handle errors gracefully - fill with zeros and log
+            print(f"Error in mic processing: {e}")
+            outdata.fill(0)

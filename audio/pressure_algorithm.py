@@ -4,9 +4,9 @@ import numpy as np
 import gevent
 import time
 from scipy.optimize import minimize
-from audio_core import RATE, AMPLITUDE, MASTER_VOLUME, soft_clip, INTERPOLATION_DURATION, BUFFER_SIZE
+from .audio_core import RATE, AMPLITUDE, MASTER_VOLUME, soft_clip, INTERPOLATION_DURATION, BUFFER_SIZE
 from state import tube_params, channels
-from pressure_targets import PressureTargetSystem
+from .pressure_targets import PressureTargetSystem
 
 class PressureAlgorithmInput:
     """Class for generating audio from pressure distribution algorithms"""
@@ -137,8 +137,8 @@ class PressureAlgorithmInput:
                 channels=1,
                 dtype='float32',
                 callback=self.callback,
-                blocksize=BUFFER_SIZE,  # Use larger buffer from audio_core
-                latency='high'  # Higher latency for stability
+                blocksize=BUFFER_SIZE,
+                latency='low'  # Changed to low latency
             )
             self.active = True
             self.time = 0  # Reset simulation time
@@ -148,7 +148,7 @@ class PressureAlgorithmInput:
                 self.targets.start_animation()
                 
             self.stream.start()
-            print("Pressure algorithm audio generator started")
+            print("Pressure algorithm audio generator started with low latency")
         except Exception as e:
             print(f"Error starting pressure algorithm stream: {e}")
             self.active = False
@@ -220,9 +220,13 @@ class PressureAlgorithmInput:
             outdata[:, 0] = output.astype(np.float32)
     
     def calculate_pressure_at_time(self, t):
-        """Calculate pressure at a specific time at a fixed monitoring position"""
-        # Fixed monitoring position (can be adjusted for different harmonic content)
-        monitor_position = self.tube_length * 0.75  # 3/4 of the way down the tube
+        """Calculate pressure at a specific time using multiple monitoring positions"""
+        # Use multiple monitoring positions for richer harmonic content
+        monitor_positions = [
+            self.tube_length * 0.25,  # 1/4 of the way down the tube
+            self.tube_length * 0.5,   # Middle of the tube
+            self.tube_length * 0.75   # 3/4 of the way down the tube
+        ]
         
         # Sum contributions from all active frequencies
         pressure = 0
@@ -236,16 +240,24 @@ class PressureAlgorithmInput:
                 # Calculate wave number (k = ω/c)
                 k = omega / self.speed_of_sound
                 
-                # Calculate pressure contribution from this frequency
-                # Standing wave pattern with position and time components
-                position_component = np.cos(k * monitor_position)
-                time_component = np.sin(omega * t)
+                # For each monitoring position
+                position_contribution = 0
+                for pos in monitor_positions:
+                    # Calculate pressure contribution at this position
+                    position_component = np.cos(k * pos)
+                    time_component = np.sin(omega * t)
+                    
+                    # Apply damping based on frequency and position
+                    damping = np.exp(-self.damping_coefficient * pos * (freq / 110))
+                    
+                    # Add contribution from this position
+                    position_contribution += position_component * time_component * damping
                 
-                # Apply damping based on frequency
-                damping = np.exp(-self.damping_coefficient * monitor_position * (freq / 110))
+                # Average the contributions from different positions
+                position_contribution /= len(monitor_positions)
                 
-                # Add contribution to overall pressure
-                pressure += amplitude * position_component * time_component * damping
+                # Add to total pressure
+                pressure += amplitude * position_contribution
         
         # Add harmonic content through modest non-linearity
         pressure += 0.1 * pressure**3
@@ -382,21 +394,55 @@ class PressureAlgorithmInput:
             combined = combined / max_pressure
                 
         return combined
+    
+    def calculate_resonant_frequencies(self, num_freqs=4):
+        """Calculate resonant frequencies based on tube parameters without optimization"""
+        # Calculate fundamental frequency based on tube length (closed-closed tube)
+        # For a closed-closed tube, f = n*c/(2L) where n = 1,2,3,...
+        fundamental = self.speed_of_sound / (2 * self.tube_length)
         
-    def pressure_error_function(self, freqs, target_pressure):
-        """Calculate error between a set of frequencies and the target pressure with optimized calculation"""
-        # Ensure frequencies are positive and in reasonable range
-        freqs = np.clip(freqs, 20, 2000)
+        # Get harmonic series based on tube configuration
+        resonant_freqs = []
         
-        # Get the combined pressure from these frequencies using optimized method
-        combined_pressure = self.combine_frequency_pressures(freqs)
+        # For closed-closed tube: odd harmonics are stronger
+        for n in range(1, num_freqs * 2):
+            if len(resonant_freqs) < num_freqs:
+                freq = n * fundamental
+                # Only use frequencies that are within reasonable hearing range
+                if 20 <= freq <= 500:
+                    resonant_freqs.append(freq)
         
-        # Calculate mean squared error - vectorized operation
-        error = np.mean((combined_pressure - target_pressure) ** 2)
-        return error
+        # If we don't have enough frequencies, add some lower ones
+        while len(resonant_freqs) < num_freqs:
+            # Add frequencies at fractions of the fundamental
+            new_freq = fundamental / (len(resonant_freqs) + 2)
+            if new_freq >= 20:
+                resonant_freqs.insert(0, new_freq)
+            else:
+                break
         
-    def find_optimal_frequencies(self, num_freqs=4, min_freq=20, max_freq=300, iterations=5, initial_freqs=None):
-        """Find the optimal set of frequencies with option for hot-starting from previous solutions"""
+        # Ensure we have exactly num_freqs frequencies
+        resonant_freqs = resonant_freqs[:num_freqs]
+        
+        # Apply slight detuning for better sound
+        detuning_factor = 0.03  # 3% detuning
+        for i in range(1, len(resonant_freqs)):
+            # Add slight detuning to avoid perfect harmonics
+            resonant_freqs[i] *= (1 + (np.random.random() - 0.5) * detuning_factor)
+        
+        # Sort the frequencies
+        resonant_freqs.sort()
+        
+        print(f"Calculated resonant frequencies: {np.round(resonant_freqs, 1)}")
+        return np.array(resonant_freqs)
+    
+    def find_optimal_frequencies(self, num_freqs=4, min_freq=20, max_freq=300, iterations=1, initial_freqs=None):
+        """
+        Simplified version that uses tube resonances instead of optimization
+        For compatibility, this maintains the same function signature
+        """
+        print("Using direct resonant frequency calculation (no optimization)")
+        
         # Ensure we have an up-to-date pressure matrix
         if self.pressure_matrix is None:
             print("Pressure matrix not initialized. Generating now...")
@@ -404,62 +450,54 @@ class PressureAlgorithmInput:
             
         if self.targets.target_pressure is None:
             self.targets.create_target_pressure()
-            
-        best_error = float('inf')
-        best_freqs = None
         
-        start_time = time.time()
+        # Calculate resonant frequencies directly
+        frequencies = self.calculate_resonant_frequencies(num_freqs)
         
-        # Try multiple random starting points to avoid local minima
-        for i in range(iterations):
-            iter_start = time.time()
-            
-            # Start with provided frequencies (hot-start) or random frequencies
-            if initial_freqs is not None and i == 0 and len(initial_freqs) == num_freqs:
-                # Use provided frequencies for first iteration
-                initial_guess = initial_freqs.copy()
-            else:
-                # Use random frequencies for other iterations
-                initial_guess = np.random.uniform(min_freq, max_freq, num_freqs)
+        # Calculate the resulting pressure distribution
+        achieved_pressure = self.combine_frequency_pressures(frequencies)
         
-            # Define bounds for the optimization
-            bounds = [(min_freq, max_freq) for _ in range(num_freqs)]
-            
-            # Run the optimization
-            result = minimize(
-                lambda x: self.pressure_error_function(x, self.targets.target_pressure),
-                initial_guess,
-                bounds=bounds,
-                method='L-BFGS-B'
-            )
-            
-            sorted_freqs = np.sort(result.x)
-            
-            if result.fun < best_error:
-                best_error = result.fun
-                best_freqs = sorted_freqs  # Store sorted frequencies
-            
-        # Sort the frequencies for consistent reporting
-        sorted_freqs = np.sort(best_freqs)
-
-        total_time = time.time() - start_time
-        print(f"Found optimal frequencies: {sorted_freqs.round(1)} (error: {best_error:.6f})")
-        print(f"Optimization took {total_time*1000:.1f}ms with {iterations} iterations")
-        # Store the solution with sorted frequencies
+        # Store the solution
         self.current_solution = {
-            'frequencies': sorted_freqs,  # Store sorted frequencies
-            'error': best_error,
+            'frequencies': frequencies,
+            'error': 0.0,  # No error calculation needed
             'target': self.targets.target_pressure,
-            'achieved': self.combine_frequency_pressures(sorted_freqs)
+            'achieved': achieved_pressure
         }
         
-        return sorted_freqs
+        return frequencies
     
     def reset_animation(self):
         """Proxy method to reset animation in target system"""
         return self.targets.reset()
     
-    """Proxy method to access target system's optimize_and_apply"""
     def optimize_and_apply(self, profile="gaussian", num_freqs=4, animated=False):
-        # Convenience methods to access target functionality
-        return self.targets.optimize_and_apply(profile, num_freqs, animated)
+        """
+        Apply model-based frequencies directly without optimization
+        Maintains same function signature for compatibility
+        """
+        print(f"Applying resonant frequencies with {profile} profile")
+        
+        # Create target pressure profile
+        self.targets.create_target_pressure(profile=profile)
+        
+        # Calculate frequencies based on tube parameters
+        frequencies = self.calculate_resonant_frequencies(num_freqs)
+        
+        # If animated mode is requested, start the animation system
+        # but use pre-calculated resonant frequencies
+        if animated:
+            self.targets.use_animation = True
+            self.targets.num_freqs = num_freqs
+            # Set resonant frequencies as the base frequencies
+            self.targets.base_frequencies = frequencies
+            print("Animation enabled with resonant frequencies")
+        else:
+            # Directly set the frequencies without animation
+            self.targets.use_animation = False
+            # Apply the frequencies to audio generation
+            amplitudes = np.ones(len(frequencies))
+            self.set_active_frequencies(frequencies, amplitudes)
+            print(f"Applied {len(frequencies)} resonant frequencies")
+        
+        return frequencies

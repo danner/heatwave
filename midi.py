@@ -268,38 +268,75 @@ def midi_device_monitor():
         gevent.sleep(5)
 
 def handle_midi_message(message, midi_out):
+    """Process incoming MIDI messages and update system state"""
     # Skip processing if we're using dummy devices
     if not midi_connected:
         return
         
-    # Process MIDI message as before
-    if message.type == 'control_change':
-        action = note_to_action.get(('control_change', message.control, message.value))
-    elif message.type == 'note_on':
-        action = note_to_action.get(('note_on', message.note, message.velocity, message.channel))
-    elif message.type == 'pitchwheel':
-        action = note_to_action.get(('pitchwheel', message.channel))
-    elif message.type == 'note_off':
-        return
+    try:
+        if MIDI_DEBUG:
+            print(f"Processing MIDI message: {message}")
+            
+        # Process MIDI message types
+        if message.type == 'control_change':
+            action = note_to_action.get(('control_change', message.control, message.value))
+        elif message.type == 'note_on':
+            action = note_to_action.get(('note_on', message.note, message.velocity, message.channel))
+        elif message.type == 'pitchwheel':
+            action = note_to_action.get(('pitchwheel', message.channel))
+        elif message.type == 'note_off':
+            return  # No action for note_off
+        else:
+            # Log unknown MIDI message types if debugging
+            if MIDI_DEBUG:
+                print(f"Unrecognized MIDI message type: {message.type}")
+            return
+            
+        if action:
+            action_type, channel, action_name = action
+            if MIDI_DEBUG:
+                print(f"Action: {action_type}, Channel: {channel}, Name: {action_name}")
+                
+            if action_type == 'rotary':
+                if action_name == 'frequency_down':
+                    adjust_frequency(channel, -1)
+                elif action_name == 'frequency_up':
+                    adjust_frequency(channel, 1)
+            elif action_type == 'volume':
+                adjust_volume(channel, message.pitch)
+            elif action_type == 'button':
+                handle_button(channel, message.note, action_name, midi_out)
+            elif action_type == 'global_button':
+                handle_global_button(action_name, message.note, midi_out)
+        else:
+            # Only log unhandled messages if debugging is enabled
+            if MIDI_DEBUG:
+                print(f"Unhandled MIDI message: {message}")
+    except Exception as e:
+        print(f"Error handling MIDI message: {e}")
 
-    if action:
-        action_type, channel, action_name = action
-        if action_type == 'rotary':
-            if action_name == 'frequency_down':
-                adjust_frequency(channel, -1)
-            elif action_name == 'frequency_up':
-                adjust_frequency(channel, 1)
-        elif action_type == 'volume':
-            adjust_volume(channel, message.pitch)
-        elif action_type == 'button':
-            handle_button(channel, message.note, action_name, midi_out)
-        elif action_type == 'global_button':
-            handle_global_button(action_name, message.note, midi_out)
-    else:
-        print(f"Unhandled MIDI message: {message}")
+# Create a more reliable MIDI processing loop
+def midi_input_processor():
+    """Process MIDI input messages from the controller"""
+    global midi_in, midi_connected
+    
+    while True:
+        # Only process if we have a valid MIDI input connection
+        if midi_connected and hasattr(midi_in, 'iter_pending'):
+            try:
+                for message in midi_in.iter_pending():
+                    handle_midi_message(message, midi_out)
+            except Exception as e:
+                print(f"Error in MIDI input processing: {e}")
+        
+        # Sleep briefly to prevent CPU overuse
+        gevent.sleep(0.001)
 
 # Start the MIDI device monitor as a greenlet instead of thread
 midi_monitor_greenlet = gevent.spawn(midi_device_monitor)
+
+# Start the MIDI input processor as a greenlet
+midi_input_greenlet = gevent.spawn(midi_input_processor)
 
 # Try to connect to MIDI devices at startup
 print("Looking for MIDI devices...")

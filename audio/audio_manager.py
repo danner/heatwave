@@ -1,4 +1,5 @@
-from audio_core import AMPLITUDE, MASTER_VOLUME
+from .audio_core import AMPLITUDE, MASTER_VOLUME
+from state import channels as state_channels  # Directly import channels from state module
 
 # Current audio source (can be 'synth', 'mic', or 'pressure')
 current_source = 'synth'
@@ -6,9 +7,6 @@ current_source = 'synth'
 # Track audio state
 frequencies = [110 for _ in range(8)]  # Track the current frequency of each channel
 volumes = [AMPLITUDE for _ in range(8)]  # Track the current volume of each channel
-
-# Reference to the channel state (will be set from main.py via audio.py)
-channels = {}
 
 def set_audio_source(source, synth=None, mic_input=None, pressure_model=None):
     """Switch between audio sources"""
@@ -19,7 +17,7 @@ def set_audio_source(source, synth=None, mic_input=None, pressure_model=None):
     
     if synth is None or mic_input is None or pressure_model is None:
         # If components aren't provided, import them here to avoid circular imports
-        from audio import synth, mic_input, pressure_model
+        from . import synth, mic_input, pressure_model
         
     # Store previous source for cleanup logic
     previous_source = current_source
@@ -69,7 +67,7 @@ def get_audio_source_settings(mic_input=None, pressure_model=None):
     """Returns the current audio source and volume settings"""
     if mic_input is None or pressure_model is None:
         # If components aren't provided, import them here to avoid circular imports
-        from audio import mic_input, pressure_model
+        from . import mic_input, pressure_model
         
     return {
         'source': current_source,
@@ -81,63 +79,74 @@ def set_mic_volume(volume, mic_input=None):
     """Set the volume for microphone input"""
     if mic_input is None:
         # If mic_input isn't provided, import it here to avoid circular imports
-        from audio import mic_input
+        from . import mic_input
         
     mic_input.set_volume(volume)
     print(f"Microphone volume set to {volume}")
+
+def set_mic_compression(enable=True, threshold=-30.0, ratio=4.0, makeup_gain=12.0, mic_input=None):
+    """Configure microphone compressor settings"""
+    if mic_input is None:
+        # If mic_input isn't provided, import it here to avoid circular imports
+        from . import mic_input
+    
+    mic_input.set_compression(enable, threshold, ratio, makeup_gain)
     
 def set_pressure_model_volume(volume, pressure_model=None):
     """Set the volume for pressure model"""
     if pressure_model is None:
         # If pressure_model isn't provided, import it here to avoid circular imports
-        from audio import pressure_model
+        from . import pressure_model
         
     pressure_model.set_volume(volume)
     print(f"Pressure model volume set to {volume}")
 
 def update_volumes(updated_channels, synth=None):
     """Update the volume of each synth channel based on the mute state"""
-    global channels
-    
-    # Update the local reference to channels
-    channels = updated_channels
-    
+    # Don't cache our own copy of channels, work directly with passed channels
     if synth is None:
         # If synth isn't provided, import it here to avoid circular imports
-        from audio import synth
-        
-    for i, channel in channels.items():
+        from . import synth
+    
+    # Track if any changes were made
+    changes_made = False
+    
+    for i, channel in updated_channels.items():
         volume = channel['volume'] if not channel['mute'] else 0
         muted = channel['mute']
-        if volume != volumes[i]:  # Only update if the volume has changed
-            print(f"Updating volume for channel {i} to {volume}")
-            volumes[i] = volume
-            # Update the synth volume
-            synth.set_volume(i, volume, muted)
+        if i < len(volumes):  # Make sure we're not exceeding array bounds
+            # Only update if the volume has changed
+            if volume != volumes[i] or muted != (volumes[i] == 0):
+                # Limit logging to reduce console spam and improve performance
+                volumes[i] = volume
+                # Update the synth volume
+                synth.set_volume(i, volume, muted)
+                changes_made = True
             
-    # If pressure model is active, update it with the current channel settings
-    if current_source == 'pressure':
-        from audio import pressure_model
-        pressure_model.update_from_synth_channels(channels)
+    # If pressure model is active and changes were made, update it
+    if changes_made and current_source == 'pressure':
+        from . import pressure_model
+        pressure_model.update_from_synth_channels(updated_channels)
 
 def update_pitches(updated_channels, synth=None):
     """Update the pitch of each synth channel based on the frequency"""
-    global channels
-    
-    # Update the local reference to channels
-    channels = updated_channels
-    
+    # Don't cache our own copy of channels, work directly with passed channels
     if synth is None:
         # If synth isn't provided, import it here to avoid circular imports
-        from audio import synth
-        
-    for i, channel in channels.items():
+        from . import synth
+    
+    # Track if any changes were made  
+    changes_made = False
+    
+    for i, channel in updated_channels.items():
         freq = max(1, channel['frequency'])
-        if freq != frequencies[i]:  # Only update if the frequency has changed
-            frequencies[i] = freq
-            synth.set_frequency(i, freq)
+        if i < len(frequencies):  # Make sure we're not exceeding array bounds
+            if freq != frequencies[i]:  # Only update if the frequency has changed
+                frequencies[i] = freq
+                synth.set_frequency(i, freq)
+                changes_made = True
             
-    # If pressure model is active, update it with the current channel settings
-    if current_source == 'pressure':
-        from audio import pressure_model
-        pressure_model.update_from_synth_channels(channels)
+    # If pressure model is active and changes were made, update it
+    if changes_made and current_source == 'pressure':
+        from . import pressure_model
+        pressure_model.update_from_synth_channels(updated_channels)

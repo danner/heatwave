@@ -80,7 +80,7 @@ class ModalDecomposition:
             freq = sorted_freqs[i]
             amp = sorted_amps[i]
             # Scale amplitude by base volume
-            volume = min(1.0, amp * 1.0)  # Scale if needed
+            volume = min(1.0, amp * 1.0) # Scale if needed
             
             print(f"Channel {i}: {freq:.1f}Hz with amplitude {volume:.2f}")
             

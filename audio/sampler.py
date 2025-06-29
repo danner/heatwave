@@ -1,7 +1,7 @@
 import sounddevice as sd
 import threading
 import numpy as np
-from audio_core import RATE, AMPLITUDE, MASTER_VOLUME, soft_clip, BUFFER_SIZE
+from .audio_core import RATE, AMPLITUDE, MASTER_VOLUME, soft_clip, BUFFER_SIZE
 
 class SamplerInput:
     """Class for sample playback"""

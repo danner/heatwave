@@ -151,6 +151,7 @@ class PressureTargetSystem:
         previous_optimal_freqs = None
         consecutive_skips = 0  # Track how many optimizations we've skipped in a row
         max_consecutive_skips = 2  # Don't allow more than this many skips in a row
+        last_print_time = time.time()
         
         while self.optimization_running and self.active:
             # Calculate current center position
@@ -165,12 +166,12 @@ class PressureTargetSystem:
             
             # Run optimization if position changed significantly OR enough time has passed
             if position_diff >= self.position_threshold or time_since_last >= self.optimization_interval:
-                # Create target pressure for this position
-                self.create_target_pressure(profile=self.profile, center=center)
-                
-                # Log optimization start with position information
-                direction_text = "⬆️" if self.direction > 0 else "⬇️"
-                print(f"\n--- Optimizing for position {center:.2f} {direction_text} (moved {position_diff:.2f}) ---")
+                # Limit logging frequency
+                current_time = time.time()
+                if current_time - last_print_time > 1.0:  # Only log once per second
+                    direction_text = "⬆️" if self.direction > 0 else "⬇️"
+                    print(f"\n--- Optimizing for position {center:.2f} {direction_text} (moved {position_diff:.2f}) ---")
+                    last_print_time = current_time
                 
                 # Determine if we should run optimization based on previous duration and skip count
                 should_optimize = True
@@ -225,8 +226,8 @@ class PressureTargetSystem:
                 self.last_center_position = center
                 self.last_optimization_time = elapsed_time
             
-            # Sleep longer between checks to reduce CPU usage
-            gevent.sleep(0.5)
+            # Increase sleep time to reduce CPU usage
+            gevent.sleep(0.75)  # Increase from 0.5 to 0.75
 
     def apply_solution_to_synth_channels(self):
         """Apply the optimal frequency solution to synth channels"""

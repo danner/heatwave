@@ -6,7 +6,9 @@ import threading
 import signal
 import os
 import gevent
-from midi import midi_in, midi_out, handle_midi_message
+import time  # Add this import
+from midi import midi_in, midi_out, handle_midi_message, midi_connected
+# Update import to use the audio package
 from audio import update_volumes, update_pitches
 from state import channels, set_lights_to_current_state, channel_log, load_channel_log, set_current_log_index
 import web_server
@@ -16,21 +18,32 @@ running = True
 
 # Function to update volumes and pitches based on channel states
 def audio_thread():
+    last_channel_state = {}
+    update_interval = 0.05  # Reduce update frequency from 100Hz to 20Hz
+    last_update_time = 0
+    
     while running:
-        update_volumes(channels)
-        update_pitches(channels)
-        gevent.sleep(0.01)  # Use gevent.sleep instead of time.sleep
-
-# MIDI processing thread
-def midi_thread():
-    try:
-        while running:
-            # Read MIDI input
-            for msg in midi_in.iter_pending():
-                handle_midi_message(msg, midi_out)
-            gevent.sleep(0.001)  # Use gevent.sleep instead of time.sleep
-    except Exception as e:
-        print(f"MIDI thread error: {e}")
+        # Check if any channel state has changed
+        channel_changed = False
+        
+        # Compare current channel state with last known state
+        for ch_id, ch_state in channels.items():
+            if ch_id not in last_channel_state or last_channel_state[ch_id] != ch_state:
+                channel_changed = True
+                break
+        
+        # Only update if state changed or update interval elapsed
+        current_time = time.time() 
+        time_since_update = current_time - last_update_time
+        
+        if channel_changed or time_since_update >= update_interval:
+            update_volumes(channels)
+            update_pitches(channels)
+            # Make a deep copy of the current state
+            last_channel_state = {ch_id: ch_state.copy() for ch_id, ch_state in channels.items()}
+            last_update_time = current_time
+            
+        gevent.sleep(0.01)  # Keep checking frequently, but update less frequently
 
 # Signal handler for graceful shutdown
 def signal_handler(sig, frame):
@@ -68,7 +81,10 @@ set_current_log_index(current_log_index)
 if current_log_index >= 0:
     channels.update(channel_log[current_log_index])
 print("loaded ", len(channel_log), " entries")
-set_lights_to_current_state(midi_out)
+
+# Initialize MIDI controller lights if available
+if midi_connected:
+    set_lights_to_current_state(midi_out)
 
 # Print IP address information to help with connection
 try:
@@ -82,9 +98,8 @@ except Exception as e:
     print(f"Could not determine IP address: {e}")
     print("Please check your network connection and use 'hostname -I' to find your IP")
 
-# Start threads as gevent greenlets instead of OS threads
+# Start audio thread as gevent greenlet
 audio_greenlet = gevent.spawn(audio_thread)
-midi_greenlet = gevent.spawn(midi_thread)
 
 # Start the web server in the main thread
 print("Web server starting at http://localhost:6134")

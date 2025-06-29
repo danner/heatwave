@@ -3,6 +3,7 @@ import threading
 import numpy as np
 import subprocess
 import os
+import time
 from .audio_core import RATE, AMPLITUDE, MASTER_VOLUME, find_mac_builtin_mic, soft_clip, BUFFER_SIZE
 
 class MicInput:

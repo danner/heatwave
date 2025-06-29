@@ -48,36 +48,9 @@ class MicInput:
         self.combined_b, self.combined_a = signal.butter(2, [hp_cutoff, cutoff], 'bandpass')
         self.combined_zi = signal.lfilter_zi(self.combined_b, self.combined_a)
         
-        # Add high-pass filter to remove hum (cutoff at 100Hz)
-        hp_cutoff = 100 / nyquist
-        self.hp_b, self.hp_a = signal.butter(2, hp_cutoff, 'high')
-        self.hp_zi = signal.lfilter_zi(self.hp_b, self.hp_a)
-        
-        # Pre-amplification before compression (higher for USB mics)
-        self.pre_amp_gain = 12.0  # dB of gain before compression
-        
-        # Compressor parameters - DISABLED by default now
-        self.enable_compression = False  # Turn off compressor by default
-        self.threshold = -30.0
-        self.ratio = 4.0
-        self.attack = 0.05
-        self.release = 0.500
-        self.makeup_gain = 18.0
-        self.knee = 6.0         # dB - smoothing around threshold
-        
         # Additional gain boost specifically for USB mics - increased for Raspberry Pi
-        self.usb_boost = 12.0   # Additional 12dB boost for USB mics (doubled from 6dB)
-        
-        # Compressor state variables
-        self.env = 0.0          # envelope follower
-        self.gain_reduction = 0.0
-        self.attack_coef = np.exp(-1.0 / (self.rate * self.attack))
-        self.release_coef = np.exp(-1.0 / (self.rate * self.release))
-        self.prev_gain = 1.0
-        self.rms_buffer_size = 512  # Samples to use for RMS calculation
-        self.rms_buffer = np.zeros(self.rms_buffer_size)
-        self.rms_pos = 0
-        self.level_meter = -60.0  # Current level meter in dB
+        # Increased to compensate for removal of compression
+        self.usb_boost = 18.0   # Additional boost for USB mics (increased from 12dB)
         
         # Processing history for dropout prevention
         self.prev_output = np.zeros(BUFFER_SIZE // 2)  # Store half a buffer of previous output
@@ -159,110 +132,6 @@ class MicInput:
         with self.lock:
             self.volume = volume * MASTER_VOLUME
     
-    def set_compression(self, enable=True, threshold=None, ratio=None, makeup_gain=None, usb_boost=None, pre_amp=None):
-        """Configure the compressor settings"""
-        with self.lock:
-            self.enable_compression = enable
-            
-            if threshold is not None:
-                self.threshold = float(threshold)
-            
-            if ratio is not None:
-                self.ratio = max(1.0, float(ratio))
-                
-            if makeup_gain is not None:
-                self.makeup_gain = float(makeup_gain)
-                
-            if usb_boost is not None and self.is_usb_mic:
-                self.usb_boost = float(usb_boost)
-                
-            if pre_amp is not None:
-                self.pre_amp_gain = float(pre_amp)
-                
-            print(f"Compressor: {'enabled' if enable else 'disabled'}, "
-                  f"pre-amp: {self.pre_amp_gain}dB, "
-                  f"threshold: {self.threshold}dB, ratio: {self.ratio}:1, "
-                  f"makeup: {self.makeup_gain}dB, "
-                  f"USB boost: {self.usb_boost if self.is_usb_mic else 0}dB")
-    
-    def _apply_compression(self, audio_buffer):
-        """Apply dynamic range compression to the audio buffer"""
-        # Skip if compression is disabled
-        if not self.enable_compression:
-            return audio_buffer
-            
-        # Apply pre-amplification before compression - using vectorized operation
-        pre_amp_linear = 10.0 ** (self.pre_amp_gain / 20.0)
-        pre_amped_buffer = audio_buffer * pre_amp_linear
-            
-        # Calculate additional gain for USB microphones
-        total_makeup_gain = self.makeup_gain
-        if hasattr(self, 'is_usb_mic') and self.is_usb_mic:
-            total_makeup_gain += self.usb_boost
-        
-        # Convert threshold and makeup gain from dB to linear
-        threshold_lin = 10.0 ** (self.threshold / 20.0)
-        makeup_gain_lin = 10.0 ** (total_makeup_gain / 20.0)
-        
-        # Optimize compression by using vectorized operations where possible
-        # Process buffer in chunks for better performance
-        output = np.zeros_like(audio_buffer)
-        chunk_size = 64  # Process 32 samples at a time
-        
-        for chunk_start in range(0, len(pre_amped_buffer), chunk_size):
-            chunk_end = min(chunk_start + chunk_size, len(pre_amped_buffer))
-            chunk = pre_amped_buffer[chunk_start:chunk_end]
-            
-            # Get max absolute value for this chunk
-            chunk_abs_max = np.max(np.abs(chunk))
-            
-            # Update level detection (envelope follower)
-            if chunk_abs_max > self.env:
-                # Attack phase - fast rise
-                self.env = self.attack_coef * self.env + (1.0 - self.attack_coef) * chunk_abs_max
-            else:
-                # Release phase - slow decay
-                self.env = self.release_coef * self.env + (1.0 - self.release_coef) * chunk_abs_max
-            
-            # Determine gain reduction amount with soft knee
-            env_db = 20.0 * np.log10(self.env + 1e-10)
-            threshold_db = self.threshold
-            
-            # Apply soft knee
-            if 2.0 * (env_db - threshold_db) < -self.knee:
-                # Below knee
-                gain_reduction_db = 0.0
-            elif 2.0 * (env_db - threshold_db) > self.knee:
-                # Above knee
-                gain_reduction_db = (env_db - threshold_db) / self.ratio
-            else:
-                # In knee region - smooth transition
-                gain_reduction_db = ((env_db - threshold_db + self.knee/2.0)**2) / (2.0 * self.knee) / self.ratio
-                
-            # Convert gain reduction to linear
-            gain_reduction_lin = 10.0 ** (-gain_reduction_db / 20.0)
-            
-            # Apply gain reduction with smoothing
-            gain = gain_reduction_lin * makeup_gain_lin
-            
-            # Smooth gain changes to avoid clicks
-            smooth_gain = 0.9 * self.prev_gain + 0.1 * gain
-            self.prev_gain = smooth_gain
-            
-            # Apply gain to original samples (not pre-amplified)
-            output[chunk_start:chunk_end] = audio_buffer[chunk_start:chunk_end] * smooth_gain
-            
-            # Update RMS buffer for metering (just use the first sample of each chunk)
-            self.rms_buffer[self.rms_pos] = output[chunk_start]
-            self.rms_pos = (self.rms_pos + 1) % self.rms_buffer_size
-        
-        # Update level meter occasionally
-        if np.random.random() < len(audio_buffer) / (self.rate * 0.5):  # Less frequent updates
-            rms = np.sqrt(np.mean(self.rms_buffer**2) + 1e-10)
-            self.level_meter = 20.0 * np.log10(rms)
-            
-        return output
-            
     def callback(self, indata, outdata, frames, time_info, status):
         """Process audio data from microphone to output"""
         # Check for underflow issues
@@ -284,22 +153,19 @@ class MicInput:
                 # Get input data from microphone
                 input_data = indata[:, 0]
                 
-                # Use a single combined bandpass filter instead of separate filters
-                # This is more efficient than running two filters in sequence
+                # Use a single combined bandpass filter
                 filtered_data, self.combined_zi = signal.lfilter(
                     self.combined_b, self.combined_a, 
                     input_data, zi=self.combined_zi
                 )
                 
-                # Apply compression if enabled (disabled by default)
-                if self.enable_compression:
-                    processed = self._apply_compression(filtered_data)
-                    # Apply volume after compression
-                    processed = processed * self.volume
-                else:
-                    # Apply volume directly to filtered data without compression
-                    # This path is much more efficient (fewer calculations)
-                    processed = filtered_data * self.volume
+                # Apply simple gain - add USB boost if needed
+                gain = self.volume
+                if hasattr(self, 'is_usb_mic') and self.is_usb_mic:
+                    gain *= (10.0 ** (self.usb_boost / 20.0))  # Convert dB to linear gain
+                
+                # Apply gain to filtered data
+                processed = filtered_data * gain
                 
                 # Apply soft clipping to prevent distortion
                 processed = soft_clip(processed)

@@ -1,5 +1,5 @@
 from .audio_core import AMPLITUDE, MASTER_VOLUME
-from state import channels as state_channels  # Directly import channels from state module
+from state import channels as state_channels, notify_channel_updated  # Add notification import
 
 # Current audio source (can be 'synth', 'mic', or 'pressure')
 current_source = 'synth'
@@ -121,6 +121,13 @@ def update_volumes(updated_channels, synth=None):
                 volumes[i] = volume
                 # Update the synth volume
                 synth.set_volume(i, volume, muted)
+                
+                # Make sure to update state module and notify listeners when coming from MIDI
+                if updated_channels is not state_channels:
+                    state_channels[i]['volume'] = channel['volume']
+                    state_channels[i]['mute'] = channel['mute']
+                    notify_channel_updated(i)
+                
                 changes_made = True
             
     # If pressure model is active and changes were made, update it
@@ -144,6 +151,12 @@ def update_pitches(updated_channels, synth=None):
             if freq != frequencies[i]:  # Only update if the frequency has changed
                 frequencies[i] = freq
                 synth.set_frequency(i, freq)
+                
+                # Make sure to update state module and notify listeners when coming from MIDI
+                if updated_channels is not state_channels:
+                    state_channels[i]['frequency'] = freq
+                    notify_channel_updated(i)
+                
                 changes_made = True
             
     # If pressure model is active and changes were made, update it

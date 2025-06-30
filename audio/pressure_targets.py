@@ -1,7 +1,6 @@
 import numpy as np
 import time
 import gevent
-from state import notify_channel_updated
 
 class PressureTargetSystem:
     """Class for managing target pressure distributions and animations"""
@@ -14,33 +13,63 @@ class PressureTargetSystem:
         self.target_pressure = None
         self.positions = None
         
+        # Pre-processed targets storage
+        self.targets = []        # List of pre-processed target distributions
+        self.target_count = 8    # Number of targets to pre-process
+        self.current_index = 0   # Current target index
+        
         # Animation parameters
         self.active = False
         self.time = 0.0
-        self.duration = 30.0  # 10 seconds for full animation (one way)
-        self.last_optimization_time = 0
-        self.optimization_interval = 1.0
+        self.duration = 30.0  
+        self.last_target_change_time = 0
         self.profile = "gaussian"
         self.width = 0.2
         self.direction = 1  # 1 for up, -1 for down
         
-        # Optimization control
+        # Target change tracking
+        self.last_target_index = -1
         self.optimization_greenlet = None
         self.optimization_running = False
-        self.current_solution = None
-        
-        # CPU usage control
-        self.last_center_position = 0
-        self.position_threshold = 0.2  # Trigger new optimization after 20% movement
-        self.last_optimization_duration = 0
-        self.max_cpu_percent = 0.3  # Maximum fraction of time to spend optimizing
-        
+    
     def update_positions(self, positions):
         """Update the positions array used for target pressure"""
         self.positions = positions
+        # Pre-process targets when positions are set
+        if self.positions is not None:
+            self.pre_process_targets()
+    
+    def pre_process_targets(self):
+        """Pre-process target distributions across the tube"""
+        if self.positions is None:
+            return
+            
+        print(f"\n=== Pre-processing {self.target_count} Target Pressure Profiles ===")
+        self.targets = []
+        
+        # Create evenly distributed centers across the tube
+        centers = np.linspace(0.1, 0.9, self.target_count)
+        
+        # Generate a target for each center position
+        for i, center in enumerate(centers):
+            print(f"Generating target {i+1}/{self.target_count} at position {center:.2f}")
+            
+            # Create normalized positions
+            norm_positions = self.positions / self.algorithm.tube_length
+            
+            # Create Gaussian distribution centered at the specified position
+            target = np.exp(-((norm_positions - center) ** 2) / (2 * self.width ** 2))
+            
+            # Normalize to [0,1]
+            if np.max(target) > 0:
+                target = target / np.max(target)
+                
+            self.targets.append(target)
+            
+        print(f"Pre-processed {len(self.targets)} targets successfully")
         
     def create_target_pressure(self, profile="gaussian", center=0.5, width=0.2):
-        """Create a target pressure distribution with the specified profile"""
+        """Create a static target pressure distribution with the specified profile"""
         if self.positions is None:
             return None
     
@@ -86,58 +115,71 @@ class PressureTargetSystem:
         
     def get_current_center_position(self, elapsed_time):
         """Get the current center position based on animation time"""
-        cycle_position = (elapsed_time % (2 * self.duration)) / self.duration
-        
-        # For the second half of the cycle, go backwards
-        if cycle_position > 1.0:
-            center = 2.0 - cycle_position
-            self.direction = -1
-        else:
-            center = cycle_position
-            self.direction = 1
+        if not self.targets:
+            return 0.5  # Default center if no targets
             
+        # Calculate which target to use
+        total_positions = self.target_count * 2 - 2  # Forward then backward (without repeating end positions)
+        cycle_duration = self.duration
+        
+        # Normalize time to [0, 1] over the cycle
+        cycle_position = (elapsed_time % cycle_duration) / cycle_duration
+        
+        # Scale to target range
+        target_position = cycle_position * total_positions
+        
+        # Convert to index
+        if target_position < self.target_count:
+            # Forward direction (0 to target_count-1)
+            self.current_index = int(target_position)
+            self.direction = 1
+        else:
+            # Reverse direction (target_count-2 down to 1)
+            self.current_index = int(total_positions - target_position)
+            self.direction = -1
+            
+        # Calculate normalized center position for display
+        center = (self.current_index + 0.5) / self.target_count
         return center
     
     def create_animated_target_pressure(self, elapsed_time):
-        """Create a time-varying target pressure distribution with oscillating motion"""
-        if self.positions is None:
-            return None
+        """Get the appropriate pre-processed target based on time"""
+        if not self.targets:
+            # Create targets if they don't exist yet
+            self.pre_process_targets()
+            if not self.targets:
+                return None
             
-        # Get the center position
-        center = self.get_current_center_position(elapsed_time)
+        # Get current target index based on time
+        _ = self.get_current_center_position(elapsed_time)  # Updates self.current_index
         
-        # Create target pressure based on selected profile with animated center
-        if self.profile == "gaussian":
-            # Normalize positions to [0,1] for easier math
-            norm_positions = self.positions / self.algorithm.tube_length
-            # Gaussian distribution centered at time-varying position
-            self.target_pressure = np.exp(-((norm_positions - center) ** 2) / (2 * self.width ** 2))
-            # Normalize to [0,1]
-            if np.max(self.target_pressure) > 0:
-                self.target_pressure = self.target_pressure / np.max(self.target_pressure)
-        
+        # Use the pre-processed target
+        self.target_pressure = self.targets[self.current_index]
         return self.target_pressure
     
     def start_animation(self):
         """Start the animation system"""
         print("\n=== Pressure Animation Starting ===")
         print(f"Profile: {self.profile}")
+        print(f"Using {self.target_count} pre-processed targets")
         print(f"Duration: {self.duration}s per cycle")
-        print(f"Optimization interval: {self.optimization_interval}s")
-        print(f"Position threshold: {self.position_threshold}")
+        
+        # Make sure targets are pre-processed
+        if not self.targets:
+            self.pre_process_targets()
         
         self.active = True
         self.time = 0
-        self.last_optimization_time = 0
-        self.last_center_position = 0
+        self.last_target_change_time = 0
+        self.last_target_index = -1
         
-        # Start the optimization greenlet
+        # Start the monitoring greenlet
         if not self.optimization_running:
-            print("Starting optimization process for animated targets...")
+            print("Starting target monitoring process...")
             self.optimization_running = True
-            self.optimization_greenlet = gevent.spawn(self.optimization_loop)
+            self.optimization_greenlet = gevent.spawn(self.target_monitor_loop)
         else:
-            print("Optimization greenlet already running")
+            print("Target monitoring already running")
             
     def stop_animation(self):
         """Stop the animation system"""
@@ -154,108 +196,41 @@ class PressureTargetSystem:
         """Reset the animation state"""
         self.active = False
         self.time = 0
-        self.last_optimization_time = 0
-        self.last_center_position = 0
+        self.last_target_change_time = 0
+        self.current_index = 0
         self.direction = 1
+        self.last_target_index = -1
     
-    def optimization_loop(self):
-        """Run optimization in a gevent greenlet to avoid audio interruptions"""
-        print("DEBUG: Starting optimization greenlet")
+    def target_monitor_loop(self):
+        """Monitor for target changes and notify algorithm"""
+        print("DEBUG: Starting target monitor greenlet with pre-processed targets")
         
-        # Check if we have frequencies at the start
-        if hasattr(self.algorithm, 'frequencies'):
-            print(f"DEBUG: Starting with {len(self.algorithm.frequencies)} active frequencies")
-            if len(self.algorithm.frequencies) > 0:
-                print(f"DEBUG: Initial frequencies: {[round(f, 1) for f in self.algorithm.frequencies]}")
-        else:
-            print("DEBUG: WARNING - algorithm has no frequencies attribute!")
-            
-        # Keep track of previous optimal frequencies for hot-starting
-        previous_optimal_freqs = None
-        consecutive_skips = 0  # Track how many optimizations we've skipped in a row
-        max_consecutive_skips = 2  # Don't allow more than this many skips in a row
         last_print_time = time.time()
-        optimization_count = 0
         
         while self.optimization_running and self.active:
-            # Calculate current center position
-            elapsed_time = self.time
+            # Get current target index
+            _ = self.get_current_center_position(self.time)  # Updates self.current_index
+            current_index = self.current_index
             
-            # Get current position
-            center = self.get_current_center_position(elapsed_time)
-            
-            # Only optimize if the position has changed enough
-            position_diff = abs(center - self.last_center_position)
-            time_since_last = elapsed_time - self.last_optimization_time
-            
-            # Run optimization if position changed significantly OR enough time has passed
-            if position_diff >= self.position_threshold or time_since_last >= self.optimization_interval:
-                optimization_count += 1
-                print(f"\nDEBUG: Optimization #{optimization_count} at position {center:.2f} (diff={position_diff:.2f})")
+            # Check if the target has changed
+            if current_index != self.last_target_index:
+                # Get the current target pressure
+                self.create_animated_target_pressure(self.time)
                 
-                # Limit logging frequency
+                # Log target change (with rate limiting)
                 current_time = time.time()
-                if current_time - last_print_time > 1.0:  # Only log once per second
+                if current_time - last_print_time > 1.0:
                     direction_text = "⬆️" if self.direction > 0 else "⬇️"
-                    print(f"\n--- Optimizing for position {center:.2f} {direction_text} (moved {position_diff:.2f}) ---")
+                    center = (current_index + 0.5) / self.target_count
+                    print(f"\n--- Target changed to #{current_index+1} at position {center:.2f} {direction_text} ---")
                     last_print_time = current_time
                 
-                # Determine if we should run optimization based on previous duration and skip count
-                should_optimize = True
-                if self.last_optimization_duration >= self.optimization_interval * self.max_cpu_percent:
-                    if consecutive_skips < max_consecutive_skips:
-                        print(f"Previous optimization was slow ({self.last_optimization_duration*1000:.1f}ms), but ensuring we don't skip too many steps")
-                        consecutive_skips += 1
-                        # Use reduced complexity for this optimization to catch up
-                        iterations = 2
-                        num_freqs = 2
-                    else:
-                        print(f"Skipping optimization at {center:.2f} to preserve audio quality")
-                        should_optimize = False
-                else:
-                    # Previous optimization was fast enough, reset consecutive skip counter
-                    consecutive_skips = 0
-                    iterations = 5
-                    num_freqs = 4
+                # Notify algorithm about the target change
+                self.algorithm.on_target_changed(self.target_pressure)
                 
-                if should_optimize:
-                    # Generate new target pressure at current position
-                    self.create_animated_target_pressure(elapsed_time)
-                    
-                    # Use modal decomposition to recalculate frequencies
-                    try:
-                        from .modal_decomposition import ModalDecomposition
-                        modal = ModalDecomposition(self.algorithm)
-                        
-                        start_time = time.time()
-                        frequencies, amplitudes = modal.decompose_target(self.target_pressure, num_modes=num_freqs*3)
-                        
-                        # Apply the frequencies if decomposition succeeded
-                        if frequencies is not None and amplitudes is not None:
-                            # Update frequencies and amplitudes in algorithm
-                            self.algorithm.set_active_frequencies(frequencies, amplitudes)
-                            
-                            # Store the solution for visualization
-                            achieved = self.algorithm.combine_frequency_pressures(frequencies, amplitudes)
-                            self.algorithm.current_solution = {
-                                'frequencies': frequencies,
-                                'amplitudes': amplitudes,
-                                'target': self.target_pressure,
-                                'achieved': achieved
-                            }
-                            
-                            # Save frequencies for hot-starting
-                            previous_optimal_freqs = frequencies.copy()
-                    except Exception as e:
-                        print(f"Error in optimization: {e}")
-                    
-                    # Calculate and store optimization duration
-                    opt_time = time.time() - start_time
-                    self.last_optimization_duration = opt_time
-                
-                # Always update tracking variables even if we skipped optimization
-                self.last_center_position = center
-                self.last_optimization_time = elapsed_time
+                # Update tracking variable
+                self.last_target_index = current_index
+                self.last_target_change_time = self.time
             
-            # Increase sleep time to reduce CPU usage
-            gevent.sleep(0.75)
+            # Sleep to reduce CPU usage
+            gevent.sleep(0.5)

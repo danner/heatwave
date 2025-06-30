@@ -114,6 +114,7 @@ class PressureTargetSystem:
     
     def start_animation(self):
         """Start the animation system"""
+        print("DEBUG: PressureTargetSystem.start_animation() called")
         self.active = True
         self.time = 0
         self.last_optimization_time = 0
@@ -121,8 +122,11 @@ class PressureTargetSystem:
         
         # Start the optimization greenlet
         if not self.optimization_running:
+            print("DEBUG: Starting optimization greenlet")
             self.optimization_running = True
             self.optimization_greenlet = gevent.spawn(self.optimization_loop)
+        else:
+            print("DEBUG: Optimization greenlet already running")
             
     def stop_animation(self):
         """Stop the animation system"""
@@ -145,13 +149,22 @@ class PressureTargetSystem:
     
     def optimization_loop(self):
         """Run optimization in a gevent greenlet to avoid audio interruptions"""
-        print("Starting optimization greenlet with reduced CPU priority")
+        print("DEBUG: Starting optimization greenlet")
         
+        # Check if we have frequencies at the start
+        if hasattr(self.algorithm, 'frequencies'):
+            print(f"DEBUG: Starting with {len(self.algorithm.frequencies)} active frequencies")
+            if len(self.algorithm.frequencies) > 0:
+                print(f"DEBUG: Initial frequencies: {[round(f, 1) for f in self.algorithm.frequencies]}")
+        else:
+            print("DEBUG: WARNING - algorithm has no frequencies attribute!")
+            
         # Keep track of previous optimal frequencies for hot-starting
         previous_optimal_freqs = None
         consecutive_skips = 0  # Track how many optimizations we've skipped in a row
         max_consecutive_skips = 2  # Don't allow more than this many skips in a row
         last_print_time = time.time()
+        optimization_count = 0
         
         while self.optimization_running and self.active:
             # Calculate current center position
@@ -166,6 +179,9 @@ class PressureTargetSystem:
             
             # Run optimization if position changed significantly OR enough time has passed
             if position_diff >= self.position_threshold or time_since_last >= self.optimization_interval:
+                optimization_count += 1
+                print(f"\nDEBUG: Optimization #{optimization_count} at position {center:.2f} (diff={position_diff:.2f})")
+                
                 # Limit logging frequency
                 current_time = time.time()
                 if current_time - last_print_time > 1.0:  # Only log once per second
@@ -231,18 +247,18 @@ class PressureTargetSystem:
 
     def apply_solution_to_synth_channels(self):
         """Apply the optimal frequency solution to synth channels"""
+        print("DEBUG: Applying solution to synth channels")
+        
         if self.algorithm.current_solution is None or 'frequencies' not in self.algorithm.current_solution:
-            print("No solution available. Run find_optimal_frequencies first.")
+            print("DEBUG: ERROR - No solution available. Run find_optimal_frequencies first.")
             return False
             
         # Get the frequencies from our solution (already sorted in find_optimal_frequencies)
         freqs = self.algorithm.current_solution['frequencies']
+        print(f"DEBUG: Solution has {len(freqs)} frequencies: {freqs.round(1)}")
         
         # Import here to ensure we get the most current state
         from state import channels
-        
-        # Use the already sorted frequencies
-        print(f"Applying frequencies to synth channels: {freqs.round(1)}")
         
         # Store current channel frequencies before updating for proper logging
         current_freqs = {}
@@ -252,9 +268,6 @@ class PressureTargetSystem:
         # Update channel frequencies in the state module
         for i, freq in enumerate(freqs):
             if i < 8:  # We have 8 channels max
-                # Log what frequencies are changing from/to
-                print(f"Channel {i}: {current_freqs.get(i, 0.0):.1f} → {freq:.1f} Hz")
-                
                 # Update the channel through the standard mechanism
                 channels[i]['frequency'] = float(freq)
                 channels[i]['mute'] = False
@@ -268,11 +281,20 @@ class PressureTargetSystem:
             channels[i]['mute'] = True
             notify_channel_updated(i)
             
-        print(f"Applied {len(freqs)} frequencies to synth channels")
+        # IMPORTANT: Check if frequencies were properly set in algorithm
+        actual_freqs = self.algorithm.frequencies
+        print(f"DEBUG: After apply_solution_to_synth_channels, algorithm has {len(actual_freqs)} active frequencies")
+        if len(actual_freqs) > 0:
+            print(f"DEBUG: Active frequencies: {[round(f, 1) for f in actual_freqs]}")
+        else:
+            print("DEBUG: WARNING - Algorithm has NO active frequencies after apply_solution!")
+    
         return True
     
     def optimize_and_apply(self, profile="gaussian", num_freqs=4, animated=False, use_modal=True):
-        """One-step function to optimize frequencies and apply them"""
+        """One-step function to optimize frequencies and apply them using only modal decomposition"""
+        print("\nDEBUG: Using ONLY modal decomposition approach (no optimization fallback)")
+        
         if animated:
             # Reset optimization timings to ensure we start fresh
             self.last_optimization_duration = 0
@@ -288,25 +310,27 @@ class PressureTargetSystem:
             
             # Create initial target pressure at starting position
             self.create_animated_target_pressure(0)
-            
-            # Run initial optimization with more resources since audio isn't playing yet
-            self.algorithm.find_optimal_frequencies(num_freqs=num_freqs)
-            self.apply_solution_to_synth_channels()
         else:
             # Create static target pressure distribution
             self.create_target_pressure(profile=profile)
             self.active = False
         
-        # Try modal decomposition first if requested
-        if use_modal:
+        # Always use modal decomposition - never fall back to optimization
+        try:
             from modal_decomposition import ModalDecomposition
             modal = ModalDecomposition(self.algorithm)
-            frequencies, amplitudes = modal.decompose_target(self.target_pressure, num_modes=max(8, num_freqs*2))
+            
+            # Use more modes to get better quality
+            frequencies, amplitudes = modal.decompose_target(self.target_pressure, num_modes=max(12, num_freqs*3))
             
             if frequencies is not None and amplitudes is not None:
                 print("Using modal decomposition approach")
                 success = modal.apply_to_channels(frequencies, amplitudes)
+                
                 if success:
+                    # Set frequencies directly in the algorithm for immediate audio
+                    self.algorithm.set_active_frequencies(frequencies, amplitudes)
+                    
                     # Store the solution for visualization
                     achieved = self.algorithm.combine_frequency_pressures(frequencies, amplitudes)
                     self.algorithm.current_solution = {
@@ -315,9 +339,45 @@ class PressureTargetSystem:
                         'target': self.target_pressure,
                         'achieved': achieved
                     }
+                    print(f"Modal decomposition succeeded with {len(frequencies)} modes")
                     return True
+                else:
+                    print("ERROR: Modal decomposition could not be applied to channels")
+            else:
+                print("ERROR: Modal decomposition failed to produce frequencies")
+        except Exception as e:
+            print(f"ERROR in modal decomposition: {e}")
         
-        # Fall back to optimization approach if modal decomposition fails or is not requested
-        print("Using optimization approach")
-        self.algorithm.find_optimal_frequencies(num_freqs=num_freqs)
-        return self.apply_solution_to_synth_channels()
+        # If modal decomposition fails, use resonant frequencies directly
+        print("WARNING: Modal decomposition failed, using resonant frequencies directly")
+        frequencies = self.algorithm.calculate_resonant_frequencies(num_freqs)
+        amplitudes = np.ones(len(frequencies))
+        
+        # Apply these frequencies directly
+        self.algorithm.set_active_frequencies(frequencies, amplitudes)
+        
+        # Create a basic solution for visualization
+        achieved = self.algorithm.combine_frequency_pressures(frequencies, amplitudes)
+        self.algorithm.current_solution = {
+            'frequencies': frequencies,
+            'amplitudes': amplitudes,
+            'target': self.target_pressure,
+            'achieved': achieved
+        }
+        
+        # Apply to channels
+        from state import channels, notify_channel_updated
+        for i, freq in enumerate(frequencies):
+            if i < 8:  # We have 8 channels max
+                channels[i]['frequency'] = float(freq)
+                channels[i]['mute'] = False
+                channels[i]['volume'] = 1.0
+                notify_channel_updated(i)
+                
+        # Mute any unused channels
+        for i in range(len(frequencies), 8):
+            channels[i]['mute'] = True
+            notify_channel_updated(i)
+    
+        print(f"Applied {len(frequencies)} resonant frequencies as fallback")
+        return True

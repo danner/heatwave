@@ -129,9 +129,11 @@ class PressureAlgorithmInput:
         self.update_from_tube_params()
         
         if self.stream is not None and self.stream.active:
+            print("DEBUG: Pressure model stream already active")
             return
             
         try:
+            print("DEBUG: Creating pressure model audio stream...")
             self.stream = sd.OutputStream(
                 samplerate=self.rate,
                 channels=1,
@@ -143,14 +145,19 @@ class PressureAlgorithmInput:
             self.active = True
             self.time = 0  # Reset simulation time
             
+            # Debug - check existing frequencies
+            print(f"DEBUG: Starting with {len(self.frequencies)} active frequencies")
+            
             # Start the optimization using gevent greenlet if animation is active
             if self.targets.active:
+                print("DEBUG: Starting animation system...")
                 self.targets.start_animation()
                 
+            print("DEBUG: Starting audio stream...")
             self.stream.start()
-            print("Pressure algorithm audio generator started with low latency")
+            print("DEBUG: Pressure algorithm audio generator started successfully")
         except Exception as e:
-            print(f"Error starting pressure algorithm stream: {e}")
+            print(f"DEBUG: ERROR starting pressure algorithm stream: {e}")
             self.active = False
             self.stream = None
     
@@ -170,19 +177,34 @@ class PressureAlgorithmInput:
         """Set the volume of the pressure algorithm audio"""
         with self.lock:
             self.volume = volume * MASTER_VOLUME
+            print(f"DEBUG: Pressure model volume set to {self.volume:.4f} (raw: {volume:.4f})")
     
     def set_active_frequencies(self, frequencies, amplitudes):
         """Set the active frequencies and amplitudes for the pressure algorithm"""
         with self.lock:
             self.frequencies = frequencies
             self.amplitudes = amplitudes
+            if len(frequencies) > 0:
+                print(f"DEBUG: Pressure model frequencies set: {[round(f, 1) for f in frequencies[:4]]}" + 
+                      ("..." if len(frequencies) > 4 else ""))
+                print(f"DEBUG: Pressure model amplitudes: {[round(a, 2) for a in amplitudes[:4]]}" +
+                      ("..." if len(amplitudes) > 4 else ""))
+            else:
+                print("DEBUG: WARNING - Pressure model got empty frequencies list!")
             
     def callback(self, outdata, frames, time_info, status):
         """Generate audio based on pressure distribution algorithm"""
         if status:
-            print(f"Pressure algorithm callback status: {status}")
+            print(f"DEBUG: Pressure algorithm callback status: {status}")
             
         with self.lock:
+            # Periodic debug info (not every callback to avoid console flooding)
+            if self.time % 5 < 0.02:  # Every ~5 seconds
+                print(f"DEBUG: Pressure callback active, {len(self.frequencies)} frequencies, vol={self.volume:.3f}")
+                if len(self.frequencies) > 0:
+                    print(f"DEBUG: Using freqs: {[round(f, 1) for f in self.frequencies[:4]]}" + 
+                          ("..." if len(self.frequencies) > 4 else ""))
+        
             # Create empty output buffer
             output = np.zeros(frames, dtype=np.float32)
             
@@ -200,24 +222,42 @@ class PressureAlgorithmInput:
                 if frames > 1000:  # Log less often for larger frames
                     direction_text = "⬆️ up" if self.targets.direction > 0 else "⬇️ down"
                     print(f"Target center: {center:.3f} {direction_text} (t={self.targets.time:.2f}s)")
-            
-            # Generate audio samples based on pressure distributions
-            time_step = 1.0 / self.rate
-            for i in range(frames):
-                # Calculate pressure at a fixed point in the tube over time
-                pressure = self.calculate_pressure_at_time(self.time)
-                
-                # Use the pressure value as the audio sample
-                output[i] = pressure * self.volume
-                
-                # Advance simulation time
-                self.time += time_step
-            
-            # Apply soft clipping to prevent distortion
-            output = soft_clip(output)
-            
-            # Copy to output
-            outdata[:, 0] = output.astype(np.float32)
+        
+            # Check if we have frequencies - add diagnostic
+            if len(self.frequencies) == 0 or len(self.amplitudes) == 0:
+                if self.time % 5 < 0.02:  # Log every ~5 seconds
+                    print("DEBUG: WARNING - No frequencies/amplitudes set in pressure model!")
+                    
+                # Generate a diagnostic test tone so we can at least verify audio path
+                test_freq = 220.0  # A3 note
+                t = np.arange(frames) / self.rate
+                output = 0.3 * np.sin(2 * np.pi * test_freq * t)
+                output *= self.volume  # Apply volume
+            else:
+                # Generate audio samples based on pressure distributions
+                time_step = 1.0 / self.rate
+                for i in range(frames):
+                    # Calculate pressure at a fixed point in the tube over time
+                    pressure = self.calculate_pressure_at_time(self.time)
+                    
+                    # Use the pressure value as the audio sample
+                    output[i] = pressure * self.volume
+                    
+                    # Advance simulation time
+                    self.time += time_step
+                    
+                # Debug output value range occasionally
+                if self.time % 5 < 0.02:  # Every ~5 seconds
+                    output_min = np.min(output)
+                    output_max = np.max(output)
+                    output_rms = np.sqrt(np.mean(np.square(output)))
+                    print(f"DEBUG: Output range: min={output_min:.3f}, max={output_max:.3f}, rms={output_rms:.3f}")
+        
+        # Apply soft clipping to prevent distortion
+        output = soft_clip(output)
+        
+        # Copy to output
+        outdata[:, 0] = output.astype(np.float32)
     
     def calculate_pressure_at_time(self, t):
         """Calculate pressure at a specific time using multiple monitoring positions"""
@@ -230,9 +270,16 @@ class PressureAlgorithmInput:
         
         # Sum contributions from all active frequencies
         pressure = 0
+        
+        # Debug periodically
+        debug_this_call = (t % 5 < 0.01) and len(self.frequencies) > 0
+        frequencies_debug = []
+        
         for i, freq in enumerate(self.frequencies):
             if i < len(self.amplitudes):
                 amplitude = self.amplitudes[i]
+                if debug_this_call and i < 2:  # Only collect debug data for first 2 freqs
+                    frequencies_debug.append(f"{freq:.1f}Hz")
                 
                 # Calculate angular frequency
                 omega = 2 * np.pi * freq
@@ -261,6 +308,10 @@ class PressureAlgorithmInput:
         
         # Add harmonic content through modest non-linearity
         pressure += 0.1 * pressure**3
+        
+        # Debug pressure value periodically
+        if debug_this_call:
+            print(f"DEBUG: Pressure calculation using {len(frequencies_debug)} freqs ({', '.join(frequencies_debug)}) = {pressure:.3f}")
         
         return pressure
     
@@ -476,7 +527,7 @@ class PressureAlgorithmInput:
         Apply model-based frequencies directly without optimization
         Maintains same function signature for compatibility
         """
-        print(f"Applying resonant frequencies with {profile} profile")
+        print(f"DEBUG: optimize_and_apply called with profile={profile}, num_freqs={num_freqs}, animated={animated}")
         
         # Create target pressure profile
         self.targets.create_target_pressure(profile=profile)
@@ -484,20 +535,26 @@ class PressureAlgorithmInput:
         # Calculate frequencies based on tube parameters
         frequencies = self.calculate_resonant_frequencies(num_freqs)
         
+        print(f"DEBUG: Calculated {len(frequencies)} resonant frequencies: {[round(f, 1) for f in frequencies]}")
+        
         # If animated mode is requested, start the animation system
         # but use pre-calculated resonant frequencies
         if animated:
-            self.targets.use_animation = True
-            self.targets.num_freqs = num_freqs
-            # Set resonant frequencies as the base frequencies
-            self.targets.base_frequencies = frequencies
-            print("Animation enabled with resonant frequencies")
+            print("DEBUG: Setting up animation mode")
+            # Directly set frequencies to ensure they're active immediately
+            amplitudes = np.ones(len(frequencies))
+            self.set_active_frequencies(frequencies, amplitudes)
+            
+            self.targets.profile = profile
+            self.targets.active = True  # Ensure animation flag is set
+            print(f"DEBUG: Animation enabled with {len(frequencies)} frequencies")
         else:
             # Directly set the frequencies without animation
-            self.targets.use_animation = False
+            print("DEBUG: Setting up static mode")
+            self.targets.active = False
             # Apply the frequencies to audio generation
             amplitudes = np.ones(len(frequencies))
             self.set_active_frequencies(frequencies, amplitudes)
-            print(f"Applied {len(frequencies)} resonant frequencies")
+            print(f"DEBUG: Applied {len(frequencies)} resonant frequencies without animation")
         
         return frequencies

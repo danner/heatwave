@@ -12,22 +12,30 @@ def set_audio_source(source, synth=None, mic_input=None, pressure_model=None):
     """Switch between audio sources"""
     global current_source
     
+    print(f"\nDEBUG: set_audio_source({source}) called. Current source: {current_source}")
+    
     if source == current_source:
+        print("DEBUG: No change needed - already using this source")
         return  # No change needed
     
     if synth is None or mic_input is None or pressure_model is None:
         # If components aren't provided, import them here to avoid circular imports
+        print("DEBUG: Importing audio components within set_audio_source")
         from . import synth, mic_input, pressure_model
         
     # Store previous source for cleanup logic
     previous_source = current_source
+    print(f"DEBUG: Switching from {previous_source} to {source}")
     
     # Stop all active sources first
     if current_source == 'synth' and synth.stream and synth.stream.active:
+        print("DEBUG: Stopping active synth stream")
         synth.stream.stop()
     elif current_source == 'mic' and mic_input.active:
+        print("DEBUG: Stopping active mic input")
         mic_input.stop()
     elif current_source == 'pressure' and pressure_model.active:
+        print("DEBUG: Stopping active pressure model")
         pressure_model.stop()
     
     # Start the requested source
@@ -46,15 +54,36 @@ def set_audio_source(source, synth=None, mic_input=None, pressure_model=None):
         current_source = 'mic'
         print("Switched to microphone input")
     elif source == 'pressure':
-        # Run the optimization algorithm to find optimal frequencies matching a target pressure
-        print("Running pressure optimization algorithm with animated target...")
-        # Use gaussian profile with 8 frequencies, with animation enabled
-        pressure_model.optimize_and_apply(profile="gaussian", num_freqs=8, animated=True)
+        # Debug current volume setting  
+        current_volume = pressure_model.volume / MASTER_VOLUME
+        print(f"DEBUG: Current pressure model volume: {current_volume:.3f}")
+        if current_volume < 0.1:
+            print("DEBUG: Volume is very low - increasing to 0.8")
+            pressure_model.set_volume(0.8)
         
-        # Start the pressure model with the optimized frequencies
+        # Use modal decomposition only with animated gaussian profile
+        print("DEBUG: Using ONLY modal decomposition (no optimization)")
+        frequencies = pressure_model.optimize_and_apply(
+            profile="gaussian", 
+            num_freqs=8, 
+            animated=True, 
+            use_modal=True  # Ensure modal decomposition is used
+        )
+        print(f"DEBUG: optimize_and_apply returned {len(frequencies)} frequencies")
+        
+        # Debug the state after optimize_and_apply
+        print(f"DEBUG: Pressure model has {len(pressure_model.frequencies)} active frequencies after optimize_and_apply")
+        
+        # Start the pressure model with the decomposed frequencies
+        print("DEBUG: Starting pressure model...")
         pressure_model.start()
+        
+        # Verify state after starting
+        print(f"DEBUG: Pressure model active: {pressure_model.active}")
+        print(f"DEBUG: Animation system active: {pressure_model.targets.active}")
+        
         current_source = 'pressure'
-        print("Switched to pressure model with animated optimization")
+        print("DEBUG: Successfully switched to pressure model using modal decomposition")
     else:
         print(f"Unknown audio source: {source}")
         # Default to synth if unknown source
@@ -94,12 +123,19 @@ def set_mic_compression(enable=True, threshold=-40.0, ratio=6.0, makeup_gain=18.
 
 def set_pressure_model_volume(volume, pressure_model=None):
     """Set the volume for pressure model"""
+    print(f"DEBUG: set_pressure_model_volume({volume}) called")
+    
     if pressure_model is None:
         # If pressure_model isn't provided, import it here to avoid circular imports
         from . import pressure_model
+
         
     pressure_model.set_volume(volume)
-    print(f"Pressure model volume set to {volume}")
+    print(f"DEBUG: Pressure model volume set to {volume} → {pressure_model.volume:.4f}")
+    
+    # If currently active, verify we have frequencies
+    if current_source == 'pressure':
+        print(f"DEBUG: Pressure model is active with {len(pressure_model.frequencies)} frequencies")
 
 def update_volumes(updated_channels, synth=None):
     """Update the volume of each synth channel based on the mute state"""

@@ -1,5 +1,5 @@
 from .audio_core import AMPLITUDE, MASTER_VOLUME
-from state import channels as state_channels, notify_channel_updated  # Add notification import
+from state import channels as state_channels, notify_channel_updated, tube_params 
 
 # Current audio source (can be 'synth', 'mic', or 'pressure')
 current_source = 'synth'

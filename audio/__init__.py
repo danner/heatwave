@@ -2,7 +2,7 @@
 Audio package for HeatWave project.
 """
 import threading
-import time  # Add time import for underflow tracking
+import time
 
 # Import all core components
 from .audio_core import (
@@ -14,12 +14,6 @@ from .audio_core import (
 from .synth import ToneSynth
 from .mic_input import MicInput
 from .pressure_algorithm import PressureAlgorithmInput
-from .audio_manager import (
-    current_source, frequencies, volumes,
-    set_audio_source, get_audio_source_settings,
-    set_mic_volume, set_pressure_model_volume,
-    update_volumes, update_pitches, set_mic_compression
-)
 
 # Initialize instances
 synth = ToneSynth(num_channels=8)
@@ -29,13 +23,20 @@ pressure_model = PressureAlgorithmInput()
 # Print available audio devices on startup
 list_audio_devices()
 
-# Initialize audio_manager with our instances - FIXED
+# Import controller - AFTER instances are created
+from .audio_controller import (
+    current_source, frequencies, volumes,
+    set_audio_source, get_audio_source_settings,
+    set_mic_volume, set_pressure_model_volume,
+    update_volumes, update_pitches, set_mic_compression
+)
+
+# Initialize controller with our instances
 import sys
-from . import audio_manager
-audio_manager.synth = synth
-audio_manager.mic_input = mic_input
-audio_manager.pressure_model = pressure_model
-# Don't set a separate channels reference - use state.channels directly
+from . import audio_controller
+audio_controller.synth = synth
+audio_controller.mic_input = mic_input
+audio_controller.pressure_model = pressure_model
 
 # Export all public components
 __all__ = [

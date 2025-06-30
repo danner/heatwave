@@ -219,184 +219,43 @@ class PressureTargetSystem:
                     num_freqs = 4
                 
                 if should_optimize:
-                    # Run optimization with current target pressure
-                    start_time = time.time()
+                    # Generate new target pressure at current position
+                    self.create_animated_target_pressure(elapsed_time)
                     
-                    # Hot-start optimization with previous results if available
-                    if previous_optimal_freqs is not None and position_diff < 0.1:
-                        # Small position change - use previous frequencies as starting point with small perturbation
-                        perturb_amount = 0.05  # 5% random perturbation
-                        perturbed_freqs = previous_optimal_freqs * (1 + perturb_amount * (np.random.random(len(previous_optimal_freqs)) - 0.5))
-                        self.algorithm.find_optimal_frequencies(num_freqs=num_freqs, iterations=iterations, initial_freqs=perturbed_freqs)
-                    else:
-                        # Larger position change - use standard optimization
-                        self.algorithm.find_optimal_frequencies(num_freqs=num_freqs, iterations=iterations)
+                    # Use modal decomposition to recalculate frequencies
+                    try:
+                        from .modal_decomposition import ModalDecomposition
+                        modal = ModalDecomposition(self.algorithm)
+                        
+                        start_time = time.time()
+                        frequencies, amplitudes = modal.decompose_target(self.target_pressure, num_modes=num_freqs*3)
+                        
+                        # Apply the frequencies if decomposition succeeded
+                        if frequencies is not None and amplitudes is not None:
+                            # Update frequencies and amplitudes in algorithm
+                            self.algorithm.set_active_frequencies(frequencies, amplitudes)
+                            
+                            # Store the solution for visualization
+                            achieved = self.algorithm.combine_frequency_pressures(frequencies, amplitudes)
+                            self.algorithm.current_solution = {
+                                'frequencies': frequencies,
+                                'amplitudes': amplitudes,
+                                'target': self.target_pressure,
+                                'achieved': achieved
+                            }
+                            
+                            # Save frequencies for hot-starting
+                            previous_optimal_freqs = frequencies.copy()
+                    except Exception as e:
+                        print(f"Error in optimization: {e}")
                     
                     # Calculate and store optimization duration
                     opt_time = time.time() - start_time
                     self.last_optimization_duration = opt_time
-                    
-                    # Save the optimal frequencies for next iteration
-                    if self.algorithm.current_solution is not None and 'frequencies' in self.algorithm.current_solution:
-                        previous_optimal_freqs = self.algorithm.current_solution['frequencies'].copy()
-                    
-                    # Apply the frequencies with interpolation
-                    self.apply_solution_to_synth_channels()
-                    
-                    # Reset the duration if it's exceptionally long to avoid persistent skipping
-                    if opt_time > self.optimization_interval * self.max_cpu_percent * 1.5:
-                        print(f"Optimization was exceptionally slow ({opt_time*1000:.1f}ms). Resetting for next iteration.")
-                        # Reduce the stored duration to allow next optimization to proceed
-                        self.last_optimization_duration = self.optimization_interval * self.max_cpu_percent * 0.8
                 
                 # Always update tracking variables even if we skipped optimization
                 self.last_center_position = center
                 self.last_optimization_time = elapsed_time
             
             # Increase sleep time to reduce CPU usage
-            gevent.sleep(0.75)  # Increase from 0.5 to 0.75
-
-    def apply_solution_to_synth_channels(self):
-        """Apply the optimal frequency solution to synth channels"""
-        print("\n=== Applying Solution to Synth Channels ===")
-        
-        if self.algorithm.current_solution is None or 'frequencies' not in self.algorithm.current_solution:
-            print("No solution available. Run find_optimal_frequencies first.")
-            return False
-            
-        # Get the frequencies from our solution
-        freqs = self.algorithm.current_solution['frequencies']
-        
-        # Import here to ensure we get the most current state
-        from state import channels
-        
-        # Update channel frequencies in the state module
-        print("Channel assignments:")
-        active_channels = 0
-        for i, freq in enumerate(freqs):
-            if i < 8:  # We have 8 channels max
-                # Update the channel through the standard mechanism
-                channels[i]['frequency'] = float(freq)
-                channels[i]['mute'] = False
-                channels[i]['volume'] = 1.0
-                
-                print(f"  Channel {i}: {freq:.1f} Hz (Active)")
-                active_channels += 1
-                
-                # Notify listeners about the update
-                notify_channel_updated(i)
-                
-        # Mute any unused channels
-        for i in range(len(freqs), 8):
-            channels[i]['mute'] = True
-            print(f"  Channel {i}: Muted")
-            notify_channel_updated(i)
-            
-        print(f"Applied {active_channels} active channels of {len(freqs)} frequencies")
-    
-        # Set frequencies in algorithm for audio generation
-        self.algorithm.set_active_frequencies(freqs, np.ones(len(freqs)))
-    
-        return True
-    
-    def optimize_and_apply(self, profile="gaussian", num_freqs=4, animated=False, use_modal=True):
-        """One-step function to optimize frequencies and apply them using only modal decomposition"""
-        print("\n=== Pressure Target Optimization ===")
-        print(f"Using modal decomposition approach exclusively")
-        print(f"Profile: {profile}, Frequencies: {num_freqs}, Animated: {animated}")
-        
-        if animated:
-            # Reset optimization timings to ensure we start fresh
-            self.last_optimization_duration = 0
-            
-            # Set up for animation with reduced CPU settings
-            self.active = True
-            self.time = 0
-            self.last_optimization_time = 0
-            self.last_center_position = 0
-            self.profile = profile
-            self.direction = 1
-            print(f"Starting animated {profile} pressure target with CPU-friendly settings")
-            
-            # Create initial target pressure at starting position
-            self.create_animated_target_pressure(0)
-        else:
-            # Create static target pressure distribution
-            self.create_target_pressure(profile=profile)
-            self.active = False
-        
-        # Always use modal decomposition - never fall back to optimization
-        try:
-            from modal_decomposition import ModalDecomposition
-            modal = ModalDecomposition(self.algorithm)
-            
-            # Use more modes to get better quality
-            print("Running modal decomposition analysis...")
-            modes_count = max(12, num_freqs*3)
-            print(f"Analyzing with {modes_count} theoretical modes")
-            
-            frequencies, amplitudes = modal.decompose_target(self.target_pressure, num_modes=modes_count)
-            
-            if frequencies is not None and amplitudes is not None:
-                print(f"Modal decomposition found {len(frequencies)} usable frequencies:")
-                for i, (freq, amp) in enumerate(zip(frequencies[:5], amplitudes[:5])):
-                    print(f"  Mode {i}: {freq:.1f} Hz, amplitude {amp:.3f}")
-                if len(frequencies) > 5:
-                    print(f"  ...and {len(frequencies)-5} more modes")
-                    
-                success = modal.apply_to_channels(frequencies, amplitudes)
-                
-                if success:
-                    # Set frequencies directly in the algorithm for immediate audio
-                    self.algorithm.set_active_frequencies(frequencies, amplitudes)
-                    
-                    # Store the solution for visualization
-                    achieved = self.algorithm.combine_frequency_pressures(frequencies, amplitudes)
-                    self.algorithm.current_solution = {
-                        'frequencies': frequencies,
-                        'amplitudes': amplitudes,
-                        'target': self.target_pressure,
-                        'achieved': achieved
-                    }
-                    print(f"Modal decomposition succeeded with {len(frequencies)} modes")
-                    return True
-                else:
-                    print("ERROR: Modal decomposition could not be applied to channels")
-            else:
-                print("ERROR: Modal decomposition failed to produce frequencies")
-        except Exception as e:
-            print(f"ERROR in modal decomposition: {e}")
-        
-        # If modal decomposition fails, use resonant frequencies directly
-        print("WARNING: Modal decomposition failed, using resonant frequencies directly")
-        frequencies = self.algorithm.calculate_resonant_frequencies(num_freqs)
-        amplitudes = np.ones(len(frequencies))
-        
-        # Apply these frequencies directly
-        self.algorithm.set_active_frequencies(frequencies, amplitudes)
-        
-        # Create a basic solution for visualization
-        achieved = self.algorithm.combine_frequency_pressures(frequencies, amplitudes)
-        self.algorithm.current_solution = {
-            'frequencies': frequencies,
-            'amplitudes': amplitudes,
-            'target': self.target_pressure,
-            'achieved': achieved
-        }
-        
-        # Apply to channels
-        from state import channels, notify_channel_updated
-        for i, freq in enumerate(frequencies):
-            if i < 8:  # We have 8 channels max
-                channels[i]['frequency'] = float(freq)
-                channels[i]['mute'] = False
-                channels[i]['volume'] = 1.0
-                notify_channel_updated(i)
-                
-        # Mute any unused channels
-        for i in range(len(frequencies), 8):
-            channels[i]['mute'] = True
-            notify_channel_updated(i)
-    
-        print(f"Applied {len(frequencies)} resonant frequencies as fallback")
-        return True
+            gevent.sleep(0.75)

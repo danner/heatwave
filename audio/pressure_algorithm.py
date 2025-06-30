@@ -5,8 +5,10 @@ import gevent
 import time
 from scipy.optimize import minimize
 from .audio_core import RATE, AMPLITUDE, MASTER_VOLUME, soft_clip, INTERPOLATION_DURATION, BUFFER_SIZE
-from state import tube_params, channels
+from state import tube_params, channels, notify_channel_updated
 from .pressure_targets import PressureTargetSystem
+from .modal_decomposition import ModalDecomposition
+from .pressure_matrix import PressureMatrixGenerator
 
 class PressureAlgorithmInput:
     """Class for generating audio from pressure distribution algorithms"""
@@ -28,19 +30,18 @@ class PressureAlgorithmInput:
         # Solution storage
         self.current_solution = None
         
-        # Add pressure matrix parameters
-        self.pressure_matrix = None  # Will store pre-calculated pressures
-        self.freq_range = None       # Will store frequencies used in matrix
-        self.min_matrix_freq = 20    # Minimum frequency for matrix (Hz)
-        self.max_matrix_freq = 500   # Maximum frequency for matrix (Hz)
-        self.freq_resolution = 1     # Frequency resolution (Hz)
+        # Physical constants for propane
+        self.specific_heat_ratio = 1.4  # γ (gamma) for propane
+        self.density = 1.9  # kg/m³ at room temperature
+        self.hole_impedance_factor = 0.6  # End correction factor for holes
         
-        # Initialize target system
+        # Initialize components
+        self.pressure_matrix = PressureMatrixGenerator(self)
         self.targets = PressureTargetSystem(self)
         
         # Initialize with tube parameters from state
         self.update_from_tube_params()
-            
+    
     def update_from_tube_params(self):
         """Update physics parameters from global tube_params"""
         # Get tube parameters from state
@@ -53,11 +54,6 @@ class PressureAlgorithmInput:
         self.reflection_count = tube_params['reflections']
         self.q_factor = tube_params['q_factor']
         
-        # Physical constants for propane
-        self.specific_heat_ratio = 1.4  # γ (gamma) for propane
-        self.density = 1.9  # kg/m³ at room temperature
-        self.hole_impedance_factor = 0.6  # End correction factor for holes
-        
         # Update positions array
         self.positions = np.linspace(0, self.tube_length, self.position_count)
         
@@ -65,64 +61,8 @@ class PressureAlgorithmInput:
         self.targets.update_positions(self.positions)
         
         # Generate pressure matrix after updating tube parameters
-        self.generate_pressure_matrix()
+        self.pressure_matrix.generate_pressure_matrix()
     
-    def generate_pressure_matrix(self):
-        """Pre-calculate pressure matrix for all frequencies and positions"""
-        print("Generating pressure matrix...")
-        start_time = time.time()
-        
-        # Use a more efficient frequency resolution - 2Hz instead of 1Hz
-        self.freq_resolution = 2
-        
-        # Create frequency range with optimized resolution
-        freq_count = int((self.max_matrix_freq - self.min_matrix_freq) / self.freq_resolution) + 1
-        self.freq_range = np.linspace(self.min_matrix_freq, self.max_matrix_freq, freq_count)
-        
-        # Initialize pressure matrix with dimensions [freq_count, position_count]
-        self.pressure_matrix = np.zeros((len(self.freq_range), len(self.positions)))
-        
-        # Calculate pressure for each frequency at each position - vectorize where possible
-        for i, freq in enumerate(self.freq_range):
-            # Calculate pressure distribution for this frequency
-            pressures = self.calculate_t_network_pressures(freq, self.positions)
-            
-            # Store in matrix
-            self.pressure_matrix[i, :] = pressures
-    
-        # Report on matrix size and generation time
-        matrix_size_mb = self.pressure_matrix.nbytes / (1024 * 1024)
-        elapsed_time = time.time() - start_time
-        print(f"Pressure matrix generated: {len(self.freq_range)}x{len(self.positions)} ({matrix_size_mb:.1f} MB)")
-        print(f"Generation took {elapsed_time:.2f} seconds")
-    
-    def get_pressure_from_matrix(self, frequency, position_index):
-        """Get pressure value from pre-calculated matrix using optimized interpolation"""
-        # Direct lookup for exact matches to avoid interpolation overhead
-        if frequency in self.freq_range:
-            freq_idx = np.where(self.freq_range == frequency)[0][0]
-            return self.pressure_matrix[freq_idx, position_index]
-            
-        # Faster bounds check
-        if frequency <= self.min_matrix_freq:
-            return self.pressure_matrix[0, position_index]
-        elif frequency >= self.max_matrix_freq:
-            return self.pressure_matrix[-1, position_index]
-        
-        # Optimized index calculation using numpy
-        freq_idx_low = int((frequency - self.min_matrix_freq) / self.freq_resolution)
-        freq_idx_high = min(freq_idx_low + 1, len(self.freq_range) - 1)
-        
-        # Get frequencies and pressures for interpolation
-        freq_low = self.freq_range[freq_idx_low]
-        freq_high = self.freq_range[freq_idx_high]
-        pressure_low = self.pressure_matrix[freq_idx_low, position_index]
-        pressure_high = self.pressure_matrix[freq_idx_high, position_index]
-        
-        # Linear interpolation
-        t = (frequency - freq_low) / (freq_high - freq_low) if freq_high > freq_low else 0
-        return pressure_low + t * (pressure_high - pressure_low)
-        
     def start(self):
         """Start the pressure algorithm audio generator"""
         # Update parameters from state before starting
@@ -138,7 +78,7 @@ class PressureAlgorithmInput:
             if len(self.frequencies) > 0:
                 print(f"  - Frequencies: {np.round(self.frequencies, 1)}")
                 print(f"  - Amplitudes: {np.round(self.amplitudes, 2)}")
-            print(f"Matrix size: {len(self.freq_range)} frequencies x {len(self.positions)} positions")
+            print(f"Matrix size: {len(self.pressure_matrix.freq_range)} frequencies x {len(self.positions)} positions")
             
             self.stream = sd.OutputStream(
                 samplerate=self.rate,
@@ -179,8 +119,7 @@ class PressureAlgorithmInput:
         """Set the volume of the pressure algorithm audio"""
         with self.lock:
             self.volume = volume * MASTER_VOLUME
-            # No debugging needed here
-
+    
     def set_active_frequencies(self, frequencies, amplitudes):
         """Set the active frequencies and amplitudes for the pressure algorithm"""
         with self.lock:
@@ -317,81 +256,10 @@ class PressureAlgorithmInput:
         
         return pressure
     
+    # Delegate pressure calculation to the pressure matrix module
     def calculate_t_network_pressures(self, frequency, positions):
-        """Calculate pressure distribution using T-network model (similar to physics-engine.js)"""
-        # Convert angular frequency
-        omega = 2 * np.pi * frequency
-        
-        # Calculate wave number (k = ω/c)
-        k = omega / self.speed_of_sound
-        
-        # Calculate base acoustic impedance (Z₀)
-        z0 = self.density * self.speed_of_sound
-        
-        # Array to store calculated pressures at each position
-        pressures = np.zeros(len(positions))
-        
-        # Both ends are closed (reflection coefficient = +1)
-        left_end_reflection = 1.0   # Closed end at x=0
-        right_end_reflection = 1.0  # Closed end at x=L
-        
-        # Calculate Q-weighted damping coefficient - lower damping = sharper resonances
-        effective_damping = self.damping_coefficient / self.q_factor
-        
-        # Calculate for each position considering multiple reflections
-        for i, x in enumerate(positions):
-            # Incident wave traveling right (initial wave)
-            incident_wave = np.cos(k * x)
-            
-            # Add initial incident wave with position-based damping
-            damping_factor = np.exp(-effective_damping * x)
-            pressures[i] += incident_wave * damping_factor
-            
-            # First reflection - more strongly weighted to enhance standing wave formation
-            if self.reflection_count >= 1:
-                first_reflection_path = 2 * self.tube_length - x
-                first_reflection_damping = np.exp(-effective_damping * first_reflection_path)
-                first_reflected_wave = right_end_reflection * np.cos(k * first_reflection_path)
-                pressures[i] += first_reflected_wave * first_reflection_damping
-            
-            # Add remaining reflections with uniform physical properties
-            for r in range(2, self.reflection_count + 1):
-                reflected_phase = 1
-                reflection_path = 0
-                
-                if r % 2 == 1:
-                    # Odd reflections (right end first)
-                    reflected_phase = right_end_reflection
-                    reflection_path = r * self.tube_length - x
-                else:
-                    # Even reflections (left end after right end)
-                    reflected_phase = right_end_reflection * left_end_reflection
-                    reflection_path = r * self.tube_length + x
-                
-                # Apply damping based on path length
-                reflection_damping = np.exp(-effective_damping * reflection_path)
-                
-                # Add this reflection to the total pressure
-                reflected_wave = reflected_phase * np.cos(k * reflection_path)
-                pressures[i] += reflected_wave * reflection_damping
-            
-            # Apply standing wave interference effects - this naturally enhances resonant frequencies
-            if self.reflection_count > 2:
-                # Standing wave factor naturally enhances resonances without targeting frequencies
-                standing_wave_factor = 1.0 + 0.3 * np.abs(np.sin(k * self.tube_length)) * (self.reflection_count / 5)
-                pressures[i] *= standing_wave_factor
-            
-            # Apply hole effects from T-network model
-            if self.hole_size > 0:
-                # Calculate impedance effects from the holes
-                hole_impedance = z0 * k * (self.hole_size / 2) * (1 + self.hole_impedance_factor)
-                impedance_effect = (z0 / hole_impedance) * 0.3
-                pressures[i] *= (1 + impedance_effect * np.sin(k * x))
-            
-            # Take absolute value for magnitude
-            pressures[i] = np.abs(pressures[i])
-        
-        return pressures
+        """Delegate to pressure matrix module"""
+        return self.pressure_matrix.calculate_t_network_pressures(frequency, positions)
     
     def update_from_synth_channels(self, channels):
         """Update frequencies and amplitudes from synth channels"""
@@ -406,154 +274,118 @@ class PressureAlgorithmInput:
         self.set_active_frequencies(frequencies, amplitudes)
         return len(frequencies) > 0  # Return True if we have active channels
     
+    # Delegate to the pressure matrix module
     def combine_frequency_pressures(self, frequencies, amplitudes=None):
-        """Combine pressure distributions from multiple frequencies using optimized matrix operations"""
-        if amplitudes is None:
-            amplitudes = np.ones(len(frequencies))
-            
-        # Initialize combined pressure
-        combined = np.zeros(len(self.positions))
-        
-        # Check if we have a valid pressure matrix
-        if self.pressure_matrix is None:
-            # Fall back to direct calculation if matrix is not available
-            for i, freq in enumerate(frequencies):
-                if i < len(amplitudes):
-                    pressure = self.calculate_t_network_pressures(freq, self.positions)
-                    combined += amplitudes[i] * pressure
-        else:
-            # Use pre-calculated matrix with vectorized operations
-            amplitudes_array = np.array(amplitudes[:len(frequencies)])
-            
-            # Create an array to store all pressure contributions
-            all_pressures = np.zeros((len(frequencies), len(self.positions)))
-            
-            # Calculate all pressures at once for each frequency
-            for i, freq in enumerate(frequencies):
-                if i < len(amplitudes):
-                    # Get pressure for this frequency at all positions
-                    for pos_idx in range(len(self.positions)):
-                        all_pressures[i, pos_idx] = self.get_pressure_from_matrix(freq, pos_idx)
-            
-            # Multiply each frequency's pressure by its amplitude and sum
-            # Using broadcasting to multiply each row by its amplitude
-            amplitudes_column = amplitudes_array[:, np.newaxis]
-            weighted_pressures = all_pressures * amplitudes_column
-            combined = np.sum(weighted_pressures, axis=0)
-            
-        # Normalize the combined pressure
-        max_pressure = np.max(combined)
-        if max_pressure > 0:
-            combined = combined / max_pressure
-                
-        return combined
-    
-    def calculate_resonant_frequencies(self, num_freqs=4):
-        """Calculate resonant frequencies based on tube parameters without optimization"""
-        # Calculate fundamental frequency based on tube length (closed-closed tube)
-        # For a closed-closed tube, f = n*c/(2L) where n = 1,2,3,...
-        fundamental = self.speed_of_sound / (2 * self.tube_length)
-        
-        # Get harmonic series based on tube configuration
-        resonant_freqs = []
-        
-        # For closed-closed tube: odd harmonics are stronger
-        for n in range(1, num_freqs * 2):
-            if len(resonant_freqs) < num_freqs:
-                freq = n * fundamental
-                # Only use frequencies that are within reasonable hearing range
-                if 20 <= freq <= 500:
-                    resonant_freqs.append(freq)
-        
-        # If we don't have enough frequencies, add some lower ones
-        while len(resonant_freqs) < num_freqs:
-            # Add frequencies at fractions of the fundamental
-            new_freq = fundamental / (len(resonant_freqs) + 2)
-            if new_freq >= 20:
-                resonant_freqs.insert(0, new_freq)
-            else:
-                break
-        
-        # Ensure we have exactly num_freqs frequencies
-        resonant_freqs = resonant_freqs[:num_freqs]
-        
-        # Apply slight detuning for better sound
-        detuning_factor = 0.03  # 3% detuning
-        for i in range(1, len(resonant_freqs)):
-            # Add slight detuning to avoid perfect harmonics
-            resonant_freqs[i] *= (1 + (np.random.random() - 0.5) * detuning_factor)
-        
-        # Sort the frequencies
-        resonant_freqs.sort()
-        
-        print(f"Calculated resonant frequencies: {np.round(resonant_freqs, 1)}")
-        return np.array(resonant_freqs)
-    
-    def find_optimal_frequencies(self, num_freqs=4, min_freq=20, max_freq=300, iterations=1, initial_freqs=None):
-        """
-        Simplified version that uses tube resonances instead of optimization
-        For compatibility, this maintains the same function signature
-        """
-        print("Using direct resonant frequency calculation (no optimization)")
-        
-        # Ensure we have an up-to-date pressure matrix
-        if self.pressure_matrix is None:
-            print("Pressure matrix not initialized. Generating now...")
-            self.generate_pressure_matrix()
-            
-        if self.targets.target_pressure is None:
-            self.targets.create_target_pressure()
-        
-        # Calculate resonant frequencies directly
-        frequencies = self.calculate_resonant_frequencies(num_freqs)
-        
-        # Calculate the resulting pressure distribution
-        achieved_pressure = self.combine_frequency_pressures(frequencies)
-        
-        # Store the solution
-        self.current_solution = {
-            'frequencies': frequencies,
-            'error': 0.0,  # No error calculation needed
-            'target': self.targets.target_pressure,
-            'achieved': achieved_pressure
-        }
-        
-        return frequencies
+        """Delegate to pressure matrix module"""
+        return self.pressure_matrix.combine_frequency_pressures(frequencies, amplitudes)
     
     def reset_animation(self):
         """Proxy method to reset animation in target system"""
         return self.targets.reset()
     
-    def optimize_and_apply(self, profile="gaussian", num_freqs=4, animated=False):
+    def configure_model_and_apply_frequencies(self, profile="gaussian", num_freqs=4, animated=False):
         """
-        Apply model-based frequencies directly without optimization
-        Maintains same function signature for compatibility
+        Configure the pressure model and apply appropriate frequencies using modal decomposition
+        
+        Args:
+            profile: Type of pressure profile to generate ("gaussian", "sine", etc.)
+            num_freqs: Number of frequencies to use
+            animated: Whether the target should animate through the tube
+            
+        Returns:
+            List of frequencies that were applied
         """
         print(f"\n=== Pressure Model Configuration ===")
         print(f"Profile: {profile}")
         print(f"Animation: {'Enabled' if animated else 'Disabled'}")
         print(f"Number of frequencies: {num_freqs}")
+        print("Using modal decomposition")
         
-        # Create target pressure profile
-        self.targets.create_target_pressure(profile=profile)
-        
-        # Calculate frequencies based on tube parameters
-        frequencies = self.calculate_resonant_frequencies(num_freqs)
-        
-        print(f"Resonant frequencies: {np.round(frequencies, 1)} Hz")
-        
-        # If animated mode is requested, start the animation system
+        # Create target pressure distribution
         if animated:
-            amplitudes = np.ones(len(frequencies))
-            self.set_active_frequencies(frequencies, amplitudes)
-            
+            self.targets.create_animated_target_pressure(0)  # Start at time 0
             self.targets.profile = profile
             self.targets.active = True
-            print(f"Animation enabled with {len(frequencies)} frequencies")
+            print(f"Animated {profile} pressure target created")
         else:
+            self.targets.create_target_pressure(profile=profile)
             self.targets.active = False
-            amplitudes = np.ones(len(frequencies))
+            print(f"Static {profile} pressure target created")
+        
+        # Use modal decomposition to find optimal frequencies
+        print("\n=== Running Modal Decomposition ===")
+        modal = ModalDecomposition(self)
+        
+        # Use more modes to get better quality
+        modes_count = max(12, num_freqs*3)
+        print(f"Analyzing with {modes_count} theoretical modes")
+        
+        frequencies, amplitudes = modal.decompose_target(self.targets.target_pressure, num_modes=modes_count)
+        
+        if frequencies is not None and amplitudes is not None:
+            print(f"Modal decomposition found {len(frequencies)} usable frequencies:")
+            for i, (freq, amp) in enumerate(zip(frequencies[:5], amplitudes[:5])):
+                print(f"  Mode {i}: {freq:.1f} Hz, amplitude {amp:.3f}")
+            if len(frequencies) > 5:
+                print(f"  ...and {len(frequencies)-5} more modes")
+                
+            # Apply to audio and channels
             self.set_active_frequencies(frequencies, amplitudes)
-            print(f"Static mode with {len(frequencies)} frequencies")
+            self._apply_frequencies_to_channels(frequencies, amplitudes)
+            
+            # Store solution for visualization
+            achieved_pressure = self.combine_frequency_pressures(frequencies, amplitudes)
+            self.current_solution = {
+                'frequencies': frequencies,
+                'amplitudes': amplitudes,
+                'target': self.targets.target_pressure,
+                'achieved': achieved_pressure
+            }
+            
+            return frequencies
+        
+        # If we get here, something went wrong
+        print("ERROR: Modal decomposition failed to produce valid frequencies")
+        return []
     
-        return frequencies
+    def _apply_frequencies_to_channels(self, frequencies, amplitudes=None):
+        """Apply the calculated frequencies and amplitudes to synth channels"""
+        if amplitudes is None:
+            amplitudes = np.ones(len(frequencies))
+            
+        print(f"\n=== Applying {len(frequencies)} Frequencies to Channels ===")
+        
+        # Find significant amplitudes
+        if len(amplitudes) > 8:  # Need to select subset if we have too many
+            # Get indices sorted by amplitude
+            indices = np.argsort(amplitudes)[::-1]  # Sort descending
+            # Take top 8
+            indices = indices[:8]
+            # Get corresponding frequencies and amplitudes
+            selected_freqs = [frequencies[i] for i in indices]
+            selected_amps = [amplitudes[i] for i in indices]
+        else:
+            selected_freqs = frequencies
+            selected_amps = amplitudes
+            
+        # Apply to channels - maximum of 8
+        num_to_apply = min(len(selected_freqs), 8)
+        
+        for i in range(num_to_apply):
+            freq = selected_freqs[i]
+            amp = selected_amps[i] if i < len(selected_amps) else 1.0
+            # Scale amplitude by base volume
+            volume = min(1.0, amp * 1.0)
+            
+            print(f"  Channel {i}: {freq:.1f}Hz with amplitude {volume:.2f}")
+            
+            # Update the channel
+            channels[i]['frequency'] = float(freq)
+            channels[i]['mute'] = False
+            channels[i]['volume'] = float(volume)
+            notify_channel_updated(i)
+            
+        # Mute any unused channels
+        for i in range(num_to_apply, 8):
+            channels[i]['mute'] = True
+            notify_channel_updated(i)

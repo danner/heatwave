@@ -43,6 +43,11 @@ class PressureTargetSystem:
         """Create a target pressure distribution with the specified profile"""
         if self.positions is None:
             return None
+    
+        print(f"\n=== Creating Target Pressure Profile ===")
+        print(f"Profile type: {profile}")
+        print(f"Center: {center}, Width: {width}")
+        print(f"Position range: 0 to {self.algorithm.tube_length}m ({len(self.positions)} points)")
             
         # Normalize positions to [0,1] for easier math
         norm_positions = self.positions / self.algorithm.tube_length
@@ -76,6 +81,7 @@ class PressureTargetSystem:
             # Default to uniform distribution
             self.target_pressure = np.ones_like(self.positions)
             
+        print(f"Target created with max pressure: {np.max(self.target_pressure):.2f}")
         return self.target_pressure
         
     def get_current_center_position(self, elapsed_time):
@@ -114,7 +120,12 @@ class PressureTargetSystem:
     
     def start_animation(self):
         """Start the animation system"""
-        print("DEBUG: PressureTargetSystem.start_animation() called")
+        print("\n=== Pressure Animation Starting ===")
+        print(f"Profile: {self.profile}")
+        print(f"Duration: {self.duration}s per cycle")
+        print(f"Optimization interval: {self.optimization_interval}s")
+        print(f"Position threshold: {self.position_threshold}")
+        
         self.active = True
         self.time = 0
         self.last_optimization_time = 0
@@ -122,11 +133,11 @@ class PressureTargetSystem:
         
         # Start the optimization greenlet
         if not self.optimization_running:
-            print("DEBUG: Starting optimization greenlet")
+            print("Starting optimization process for animated targets...")
             self.optimization_running = True
             self.optimization_greenlet = gevent.spawn(self.optimization_loop)
         else:
-            print("DEBUG: Optimization greenlet already running")
+            print("Optimization greenlet already running")
             
     def stop_animation(self):
         """Stop the animation system"""
@@ -247,25 +258,21 @@ class PressureTargetSystem:
 
     def apply_solution_to_synth_channels(self):
         """Apply the optimal frequency solution to synth channels"""
-        print("DEBUG: Applying solution to synth channels")
+        print("\n=== Applying Solution to Synth Channels ===")
         
         if self.algorithm.current_solution is None or 'frequencies' not in self.algorithm.current_solution:
-            print("DEBUG: ERROR - No solution available. Run find_optimal_frequencies first.")
+            print("No solution available. Run find_optimal_frequencies first.")
             return False
             
-        # Get the frequencies from our solution (already sorted in find_optimal_frequencies)
+        # Get the frequencies from our solution
         freqs = self.algorithm.current_solution['frequencies']
-        print(f"DEBUG: Solution has {len(freqs)} frequencies: {freqs.round(1)}")
         
         # Import here to ensure we get the most current state
         from state import channels
         
-        # Store current channel frequencies before updating for proper logging
-        current_freqs = {}
-        for i in range(min(len(freqs), 8)):
-            current_freqs[i] = channels[i]['frequency']
-        
         # Update channel frequencies in the state module
+        print("Channel assignments:")
+        active_channels = 0
         for i, freq in enumerate(freqs):
             if i < 8:  # We have 8 channels max
                 # Update the channel through the standard mechanism
@@ -273,27 +280,30 @@ class PressureTargetSystem:
                 channels[i]['mute'] = False
                 channels[i]['volume'] = 1.0
                 
+                print(f"  Channel {i}: {freq:.1f} Hz (Active)")
+                active_channels += 1
+                
                 # Notify listeners about the update
                 notify_channel_updated(i)
                 
         # Mute any unused channels
         for i in range(len(freqs), 8):
             channels[i]['mute'] = True
+            print(f"  Channel {i}: Muted")
             notify_channel_updated(i)
             
-        # IMPORTANT: Check if frequencies were properly set in algorithm
-        actual_freqs = self.algorithm.frequencies
-        print(f"DEBUG: After apply_solution_to_synth_channels, algorithm has {len(actual_freqs)} active frequencies")
-        if len(actual_freqs) > 0:
-            print(f"DEBUG: Active frequencies: {[round(f, 1) for f in actual_freqs]}")
-        else:
-            print("DEBUG: WARNING - Algorithm has NO active frequencies after apply_solution!")
+        print(f"Applied {active_channels} active channels of {len(freqs)} frequencies")
+    
+        # Set frequencies in algorithm for audio generation
+        self.algorithm.set_active_frequencies(freqs, np.ones(len(freqs)))
     
         return True
     
     def optimize_and_apply(self, profile="gaussian", num_freqs=4, animated=False, use_modal=True):
         """One-step function to optimize frequencies and apply them using only modal decomposition"""
-        print("\nDEBUG: Using ONLY modal decomposition approach (no optimization fallback)")
+        print("\n=== Pressure Target Optimization ===")
+        print(f"Using modal decomposition approach exclusively")
+        print(f"Profile: {profile}, Frequencies: {num_freqs}, Animated: {animated}")
         
         if animated:
             # Reset optimization timings to ensure we start fresh
@@ -321,10 +331,19 @@ class PressureTargetSystem:
             modal = ModalDecomposition(self.algorithm)
             
             # Use more modes to get better quality
-            frequencies, amplitudes = modal.decompose_target(self.target_pressure, num_modes=max(12, num_freqs*3))
+            print("Running modal decomposition analysis...")
+            modes_count = max(12, num_freqs*3)
+            print(f"Analyzing with {modes_count} theoretical modes")
+            
+            frequencies, amplitudes = modal.decompose_target(self.target_pressure, num_modes=modes_count)
             
             if frequencies is not None and amplitudes is not None:
-                print("Using modal decomposition approach")
+                print(f"Modal decomposition found {len(frequencies)} usable frequencies:")
+                for i, (freq, amp) in enumerate(zip(frequencies[:5], amplitudes[:5])):
+                    print(f"  Mode {i}: {freq:.1f} Hz, amplitude {amp:.3f}")
+                if len(frequencies) > 5:
+                    print(f"  ...and {len(frequencies)-5} more modes")
+                    
                 success = modal.apply_to_channels(frequencies, amplitudes)
                 
                 if success:

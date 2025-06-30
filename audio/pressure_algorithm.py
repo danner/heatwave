@@ -129,35 +129,37 @@ class PressureAlgorithmInput:
         self.update_from_tube_params()
         
         if self.stream is not None and self.stream.active:
-            print("DEBUG: Pressure model stream already active")
             return
             
         try:
-            print("DEBUG: Creating pressure model audio stream...")
+            print("\n=== Pressure Algorithm Initialization ===")
+            print(f"Position count: {self.position_count}")
+            print(f"Active frequencies: {len(self.frequencies)}")
+            if len(self.frequencies) > 0:
+                print(f"  - Frequencies: {np.round(self.frequencies, 1)}")
+                print(f"  - Amplitudes: {np.round(self.amplitudes, 2)}")
+            print(f"Matrix size: {len(self.freq_range)} frequencies x {len(self.positions)} positions")
+            
             self.stream = sd.OutputStream(
                 samplerate=self.rate,
                 channels=1,
                 dtype='float32',
                 callback=self.callback,
                 blocksize=BUFFER_SIZE,
-                latency='low'  # Changed to low latency
+                latency='low'
             )
             self.active = True
             self.time = 0  # Reset simulation time
             
-            # Debug - check existing frequencies
-            print(f"DEBUG: Starting with {len(self.frequencies)} active frequencies")
-            
             # Start the optimization using gevent greenlet if animation is active
             if self.targets.active:
-                print("DEBUG: Starting animation system...")
+                print("Starting animation system with target tracking...")
                 self.targets.start_animation()
                 
-            print("DEBUG: Starting audio stream...")
             self.stream.start()
-            print("DEBUG: Pressure algorithm audio generator started successfully")
+            print("Pressure algorithm started and producing audio")
         except Exception as e:
-            print(f"DEBUG: ERROR starting pressure algorithm stream: {e}")
+            print(f"Error starting pressure algorithm stream: {e}")
             self.active = False
             self.stream = None
     
@@ -177,8 +179,8 @@ class PressureAlgorithmInput:
         """Set the volume of the pressure algorithm audio"""
         with self.lock:
             self.volume = volume * MASTER_VOLUME
-            print(f"DEBUG: Pressure model volume set to {self.volume:.4f} (raw: {volume:.4f})")
-    
+            # No debugging needed here
+
     def set_active_frequencies(self, frequencies, amplitudes):
         """Set the active frequencies and amplitudes for the pressure algorithm"""
         with self.lock:
@@ -527,7 +529,10 @@ class PressureAlgorithmInput:
         Apply model-based frequencies directly without optimization
         Maintains same function signature for compatibility
         """
-        print(f"DEBUG: optimize_and_apply called with profile={profile}, num_freqs={num_freqs}, animated={animated}")
+        print(f"\n=== Pressure Model Configuration ===")
+        print(f"Profile: {profile}")
+        print(f"Animation: {'Enabled' if animated else 'Disabled'}")
+        print(f"Number of frequencies: {num_freqs}")
         
         # Create target pressure profile
         self.targets.create_target_pressure(profile=profile)
@@ -535,26 +540,20 @@ class PressureAlgorithmInput:
         # Calculate frequencies based on tube parameters
         frequencies = self.calculate_resonant_frequencies(num_freqs)
         
-        print(f"DEBUG: Calculated {len(frequencies)} resonant frequencies: {[round(f, 1) for f in frequencies]}")
+        print(f"Resonant frequencies: {np.round(frequencies, 1)} Hz")
         
         # If animated mode is requested, start the animation system
-        # but use pre-calculated resonant frequencies
         if animated:
-            print("DEBUG: Setting up animation mode")
-            # Directly set frequencies to ensure they're active immediately
             amplitudes = np.ones(len(frequencies))
             self.set_active_frequencies(frequencies, amplitudes)
             
             self.targets.profile = profile
-            self.targets.active = True  # Ensure animation flag is set
-            print(f"DEBUG: Animation enabled with {len(frequencies)} frequencies")
+            self.targets.active = True
+            print(f"Animation enabled with {len(frequencies)} frequencies")
         else:
-            # Directly set the frequencies without animation
-            print("DEBUG: Setting up static mode")
             self.targets.active = False
-            # Apply the frequencies to audio generation
             amplitudes = np.ones(len(frequencies))
             self.set_active_frequencies(frequencies, amplitudes)
-            print(f"DEBUG: Applied {len(frequencies)} resonant frequencies without animation")
-        
+            print(f"Static mode with {len(frequencies)} frequencies")
+    
         return frequencies
